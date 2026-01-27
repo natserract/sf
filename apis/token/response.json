@@ -1,0 +1,10 @@
+{
+    "access_token": "xxxx",
+    "signature": "XXXX",
+    "scope": "cdp_ingest_api custom_permissions cdp_segment_api content cdp_api interaction_api chatbot_api cdp_identityresolution_api wave_api cdp_calculated_insight_api einstein_gpt_api id api eclair_api pardot_api lightning visualforce sfap_api cdp_query_api openid cdp_profile_api pwdless_login_api user_registration_api chatter_api forgot_password",
+    "instance_url": "https://XXXX.my.salesforce.com",
+    "id": "https://login.salesforce.com/id/XX/XXXX",
+    "token_type": "Bearer",
+    "issued_at": "1769482600039",
+    "api_instance_url": "https://api.salesforce.com"
+}
