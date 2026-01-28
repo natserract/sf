@@ -6,8 +6,13 @@
 3. Data Cloud https://developer.salesforce.com/docs/data/connectapi/guide/query-use-case.html
 
    3.1. Data ingestion https://www.youtube.com/watch?v=_OOGyWxOtJQ
+   
    3.2. Connecting data cloud with google big query https://www.youtube.com/watch?v=OPH95cvHj1Y
+
    3.2. REST API specs https://developer.salesforce.com/docs/data/connectapi/references/spec?meta=Summary 
+
+   3.3. Ingestion API https://developer.salesforce.com/docs/data/data-cloud-int/guide/c360-a-ingestion-api.html
+   
 4. Marketing Cloud Next https://help.salesforce.com/s/articleView?id=mktg.mktg_main.htm&type=5
 
 ## Marketing Cloud Engagement
