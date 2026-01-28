@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v5"
@@ -169,11 +171,55 @@ func (c *Client) buildRequest(ctx context.Context, opts RequestOptions) (*http.R
 		if bodyBytes, ok := opts.Body.([]byte); ok {
 			bodyReader = bytes.NewReader(bodyBytes)
 		} else {
-			bodyJSON, err := json.Marshal(opts.Body)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal request body: %w", err)
+			// If Content-Type explicitly requests form encoding, honor it.
+			contentType := opts.Headers["Content-Type"]
+			if contentType == "" {
+				contentType = opts.Headers["content-type"]
 			}
-			bodyReader = bytes.NewReader(bodyJSON)
+
+			if strings.HasPrefix(strings.ToLower(contentType), "application/x-www-form-urlencoded") {
+				form := url.Values{}
+
+				switch v := opts.Body.(type) {
+				case url.Values:
+					form = v
+				case map[string]string:
+					for k, val := range v {
+						form.Set(k, val)
+					}
+				case map[string]interface{}:
+					for k, val := range v {
+						if val == nil {
+							continue
+						}
+						form.Set(k, fmt.Sprint(val))
+					}
+				default:
+					// Convert structs (or other JSON-marshalable types) into a map first.
+					bodyJSON, err := json.Marshal(opts.Body)
+					if err != nil {
+						return nil, fmt.Errorf("failed to marshal request body: %w", err)
+					}
+					var m map[string]interface{}
+					if err := json.Unmarshal(bodyJSON, &m); err != nil {
+						return nil, fmt.Errorf("failed to unmarshal request body: %w", err)
+					}
+					for k, val := range m {
+						if val == nil {
+							continue
+						}
+						form.Set(k, fmt.Sprint(val))
+					}
+				}
+
+				bodyReader = strings.NewReader(form.Encode())
+			} else {
+				bodyJSON, err := json.Marshal(opts.Body)
+				if err != nil {
+					return nil, fmt.Errorf("failed to marshal request body: %w", err)
+				}
+				bodyReader = bytes.NewReader(bodyJSON)
+			}
 		}
 	}
 
@@ -183,7 +229,7 @@ func (c *Client) buildRequest(ctx context.Context, opts RequestOptions) (*http.R
 	}
 
 	// Set default headers
-	if opts.Body != nil {
+	if opts.Body != nil && opts.Headers["Content-Type"] == "" && opts.Headers["content-type"] == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")

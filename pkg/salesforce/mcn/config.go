@@ -13,7 +13,7 @@ type Config struct {
 	ClientSecret string
 }
 
-func Load() (*Config, error) {
+func LoadConfig() (*Config, error) {
 	// Try to load .env file, but don't fail if it doesn't exist
 	_ = godotenv.Load()
 
