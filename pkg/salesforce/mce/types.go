@@ -1,4 +1,4 @@
-package salesforce
+package sfmce
 
 import (
 	"encoding/json"

@@ -7,7 +7,7 @@ import (
 	"sort"
 
 	"github.com/natserract/sf/pkg/config"
-	salesforce "github.com/natserract/sf/pkg/salesforce/mce"
+	sfmce "github.com/natserract/sf/pkg/salesforce/mce"
 	"go.uber.org/zap"
 )
 
@@ -32,7 +32,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	client := salesforce.NewSalesforceWithLogger(cfg, logger)
+	client := sfmce.NewSalesforceWithLogger(cfg, logger)
 
 	// Phase 1 – full folder set
 	folderIDs, err := collectAllFolderIDs(client, logger)

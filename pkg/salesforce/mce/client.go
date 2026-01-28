@@ -16,7 +16,7 @@
 // This package provides a Go client for interacting with the Marketing Cloud REST API,
 // handling authentication, token management, and API requests for various MCE resources
 // such as data extensions, folders, and other marketing cloud entities.
-package salesforce
+package sfmce
 
 import (
 	"sync"

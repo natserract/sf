@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/natserract/sf/dataretention/schema/postgres"
 	"github.com/natserract/sf/dataretention/schema/postgres/gen"
-	salesforce "github.com/natserract/sf/pkg/salesforce/mce"
+	sfmce "github.com/natserract/sf/pkg/salesforce/mce"
 	"go.uber.org/zap"
 )
 
@@ -31,7 +31,7 @@ func NewFolderService(db *postgres.DB, logger *zap.Logger) *FolderService {
 }
 
 // SaveFolder saves or updates a folder in the database
-func (f *FolderService) SaveFolder(ctx context.Context, folder salesforce.Folder) error {
+func (f *FolderService) SaveFolder(ctx context.Context, folder sfmce.Folder) error {
 	lastUpdated := pgtype.Timestamptz{Time: folder.LastUpdated, Valid: !folder.LastUpdated.IsZero()}
 	// Treat "0" as empty/invalid parentId (it's a sentinel value meaning "no parent")
 	parentIDValid := folder.ParentID != "" && folder.ParentID != "0"
@@ -86,7 +86,7 @@ func (f *FolderService) SaveFolder(ctx context.Context, folder salesforce.Folder
 }
 
 // SaveFoldersBatch saves multiple folders in a transaction
-func (f *FolderService) SaveFoldersBatch(ctx context.Context, folders []salesforce.Folder) error {
+func (f *FolderService) SaveFoldersBatch(ctx context.Context, folders []sfmce.Folder) error {
 	tx, err := f.db.Pool().Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -108,7 +108,7 @@ func (f *FolderService) SaveFoldersBatch(ctx context.Context, folders []salesfor
 }
 
 // SaveFoldersInOrder saves folders ensuring parents are saved before children
-func (f *FolderService) SaveFoldersInOrder(ctx context.Context, folders []salesforce.Folder, folderMap map[string]salesforce.Folder) error {
+func (f *FolderService) SaveFoldersInOrder(ctx context.Context, folders []sfmce.Folder, folderMap map[string]sfmce.Folder) error {
 	// Create a map to track which folders have been saved
 	saved := make(map[string]bool)
 	maxRetries := 5

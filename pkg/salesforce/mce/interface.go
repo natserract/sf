@@ -1,4 +1,4 @@
-package salesforce
+package sfmce
 
 // SalesforceClient defines the interface for Salesforce API operations
 type SalesforceClient interface {

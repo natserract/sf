@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/natserract/sf/dataretention/schema/postgres"
 	"github.com/natserract/sf/dataretention/schema/postgres/gen"
-	salesforce "github.com/natserract/sf/pkg/salesforce/mce"
+	sfmce "github.com/natserract/sf/pkg/salesforce/mce"
 	"github.com/sourcegraph/conc/pool"
 	"go.uber.org/zap"
 )
@@ -94,7 +94,7 @@ func (m *SyncMetrics) TotalFailed() int {
 // SyncService handles direct synchronization of folders and data extensions
 // with durable tracking via sync jobs
 type SyncService struct {
-	client     salesforce.SalesforceClient
+	client     sfmce.SalesforceClient
 	dataExtSvc *DataExtensionService
 	folderSvc  *FolderService
 	queries    *gen.Queries
@@ -103,7 +103,7 @@ type SyncService struct {
 }
 
 // NewSyncService creates a new sync service
-func NewSyncService(client salesforce.SalesforceClient, dataExtSvc *DataExtensionService, folderSvc *FolderService, db *postgres.DB, logger *zap.Logger) *SyncService {
+func NewSyncService(client sfmce.SalesforceClient, dataExtSvc *DataExtensionService, folderSvc *FolderService, db *postgres.DB, logger *zap.Logger) *SyncService {
 	return &SyncService{
 		client:     client,
 		dataExtSvc: dataExtSvc,
@@ -159,9 +159,9 @@ func (s *SyncService) SyncFolders(ctx context.Context, metrics *SyncMetrics) err
 		zap.Int("items_count", len(foldersResp.Entry)))
 
 	// Separate top-level folders (parentId is "0" or empty) from subfolders
-	var topLevelFolders []salesforce.Folder
-	var subfolders []salesforce.Folder
-	folderMap := make(map[string]salesforce.Folder) // Map to track all folders by ID
+	var topLevelFolders []sfmce.Folder
+	var subfolders []sfmce.Folder
+	folderMap := make(map[string]sfmce.Folder) // Map to track all folders by ID
 
 	for _, folder := range foldersResp.Entry {
 		folderMap[folder.ID] = folder
@@ -232,7 +232,7 @@ func (s *SyncService) SyncFolders(ctx context.Context, metrics *SyncMetrics) err
 }
 
 // SyncFolder syncs a single folder: saves it, fetches subfolders recursively, and data extensions
-func (s *SyncService) SyncFolder(ctx context.Context, folder salesforce.Folder, recursive bool, metrics *SyncMetrics) error {
+func (s *SyncService) SyncFolder(ctx context.Context, folder sfmce.Folder, recursive bool, metrics *SyncMetrics) error {
 	// Save the folder
 	if err := s.folderSvc.SaveFolder(ctx, folder); err != nil {
 		metrics.AddFolderFailure()

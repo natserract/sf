@@ -8,7 +8,7 @@ import (
 	"github.com/natserract/sf/dataretention/schema/postgres"
 	"github.com/natserract/sf/dataretention/services"
 	"github.com/natserract/sf/pkg/config"
-	salesforce "github.com/natserract/sf/pkg/salesforce/mce"
+	sfmce "github.com/natserract/sf/pkg/salesforce/mce"
 	"go.uber.org/zap"
 )
 
@@ -45,7 +45,7 @@ func main() {
 	fmt.Println("Database connection established")
 
 	// Create Salesforce client
-	client := salesforce.NewSalesforceWithLogger(cfg, logger)
+	client := sfmce.NewSalesforceWithLogger(cfg, logger)
 
 	// Create folder service
 	folderSvc := services.NewFolderService(db, logger)
