@@ -7,7 +7,6 @@ import (
 
 	"github.com/natserract/sf/dataretention/schema/postgres"
 	"github.com/natserract/sf/dataretention/services"
-	"github.com/natserract/sf/pkg/config"
 	sfmce "github.com/natserract/sf/pkg/salesforce/mce"
 	"go.uber.org/zap"
 )
@@ -22,7 +21,7 @@ func main() {
 	defer logger.Sync()
 
 	// Load configuration
-	cfg, err := config.Load()
+	cfg, err := sfmce.LoadConfig()
 	if err != nil {
 		logger.Error("Failed to load config", zap.Error(err))
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)

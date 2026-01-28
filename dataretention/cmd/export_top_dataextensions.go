@@ -6,7 +6,6 @@ import (
 	"os"
 	"sort"
 
-	"github.com/natserract/sf/pkg/config"
 	sfmce "github.com/natserract/sf/pkg/salesforce/mce"
 	"go.uber.org/zap"
 )
@@ -25,7 +24,7 @@ func main() {
 	}
 	defer logger.Sync()
 
-	cfg, err := config.Load()
+	cfg, err := sfmce.LoadConfig()
 	if err != nil {
 		logger.Error("Failed to load config", zap.Error(err))
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
