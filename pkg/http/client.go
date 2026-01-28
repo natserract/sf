@@ -261,6 +261,12 @@ func (c *Client) Post(ctx context.Context, url string, headers map[string]string
 	})
 }
 
+// DoRequest executes a fully-constructed net/http request. This is useful for
+// calling endpoints that don't fit the typed helper methods (custom/native APIs).
+func (c *Client) DoRequest(req *http.Request) (*http.Response, error) {
+	return c.httpClient.Do(req)
+}
+
 func (c *Client) Patch(ctx context.Context, url string, headers map[string]string, body interface{}) (*Response, error) {
 	return c.Do(RequestOptions{
 		Method:  http.MethodPatch,

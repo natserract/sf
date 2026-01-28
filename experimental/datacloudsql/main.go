@@ -27,11 +27,7 @@ func main() {
 
 	// Create Salesforce client
 	client := sfmcn.NewSalesforceWithLogger(cfg, logger)
-	authResp, err := client.Authenticate()
-	if err != nil {
-		logger.Error("Failed to authenticate", zap.Error(err))
-	}
 
-	fmt.Println("Response: ", authResp)
-
+	// SQL
+	joinRecords(client)
 }

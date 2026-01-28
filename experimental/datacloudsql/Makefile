@@ -10,8 +10,8 @@ ROOT_DIR := $(shell pwd)
 
 .PHONY: build
 build:
-	go build -o sforce main.go
+	go build -o datacloudsql .
 
 .PHONY: run
 run:
-	go run -race main.go
+	go run -race .
