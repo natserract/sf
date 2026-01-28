@@ -2,3 +2,4 @@
 ./sforce
 .env.dev
 .env.prod
+.exports
