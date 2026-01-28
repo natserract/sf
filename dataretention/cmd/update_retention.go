@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/natserract/sforce/pkg/config"
-	"github.com/natserract/sforce/pkg/sforce"
-	"github.com/natserract/sforce/schema/postgres"
-	"github.com/natserract/sforce/services"
+	"github.com/natserract/sf/dataretention/schema/postgres"
+	"github.com/natserract/sf/dataretention/services"
+	"github.com/natserract/sf/pkg/config"
+	salesforce "github.com/natserract/sf/pkg/salesforce/mce"
 	"go.uber.org/zap"
 )
 
@@ -47,7 +47,7 @@ func main() {
 	logger.Info("Database connection established")
 
 	// Create Salesforce client
-	client := sforce.NewSalesforceWithLogger(cfg, logger)
+	client := salesforce.NewSalesforceWithLogger(cfg, logger)
 
 	// Create data extension service
 	dataExtSvc := services.NewDataExtensionService(db, logger)

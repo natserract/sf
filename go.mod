@@ -7,7 +7,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/joho/godotenv v1.5.1
-	github.com/natserract/sforce v0.0.0-20260126085109-c66358616498
 	github.com/sourcegraph/conc v0.3.0
 	go.uber.org/zap v1.27.1
 )

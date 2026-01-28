@@ -1,4 +1,4 @@
-package main
+package salesforce
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	httpclient "github.com/natserract/sforce/pkg/http"
+	httpclient "github.com/natserract/sf/pkg/http"
 	"go.uber.org/zap"
 )
 

@@ -8,9 +8,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/natserract/sforce/pkg/sforce"
-	"github.com/natserract/sforce/schema/postgres"
-	"github.com/natserract/sforce/schema/postgres/gen"
+	"github.com/natserract/sf/dataretention/schema/postgres"
+	"github.com/natserract/sf/dataretention/schema/postgres/gen"
+	salesforce "github.com/natserract/sf/pkg/salesforce/mce"
 	"go.uber.org/zap"
 )
 
@@ -31,7 +31,7 @@ func NewDataExtensionService(db *postgres.DB, logger *zap.Logger) *DataExtension
 }
 
 // SaveDataExtension saves or updates a data extension in the database
-func (d *DataExtensionService) SaveDataExtension(ctx context.Context, de sforce.DataExtension) error {
+func (d *DataExtensionService) SaveDataExtension(ctx context.Context, de salesforce.DataExtension) error {
 	createdDate := pgtype.Timestamptz{Time: de.CreatedDate.Time, Valid: !de.CreatedDate.Time.IsZero()}
 	modifiedDate := pgtype.Timestamptz{Time: de.ModifiedDate.Time, Valid: !de.ModifiedDate.Time.IsZero()}
 
@@ -143,7 +143,7 @@ func (d *DataExtensionService) SaveDataExtension(ctx context.Context, de sforce.
 }
 
 // SaveDataExtensionsBatch saves multiple data extensions in a transaction
-func (d *DataExtensionService) SaveDataExtensionsBatch(ctx context.Context, dataExtensions []sforce.DataExtension) error {
+func (d *DataExtensionService) SaveDataExtensionsBatch(ctx context.Context, dataExtensions []salesforce.DataExtension) error {
 	tx, err := d.db.Pool().Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -166,14 +166,14 @@ func (d *DataExtensionService) SaveDataExtensionsBatch(ctx context.Context, data
 
 // GetDataExtensions fetches all data extensions for a folder with pagination
 // Handles pagination internally and returns all matching data extensions as a single slice
-func (d *DataExtensionService) GetDataExtensions(ctx context.Context, client sforce.SalesforceClient, folderID string) ([]sforce.DataExtension, error) {
+func (d *DataExtensionService) GetDataExtensions(ctx context.Context, client salesforce.SalesforceClient, folderID string) ([]salesforce.DataExtension, error) {
 	page := 1
 	pageSize := 96
 
 	d.logger.Info("Fetching data extensions",
 		zap.String("folder_id", folderID))
 
-	var allDataExtensions []sforce.DataExtension
+	var allDataExtensions []salesforce.DataExtension
 
 	for {
 		// Fetch data extensions for current page
@@ -218,9 +218,9 @@ func (d *DataExtensionService) GetDataExtensions(ctx context.Context, client sfo
 
 // UpdateDataRetentionViaAPI updates data retention properties via Salesforce API
 // Uses the standard payload: 3 months retention, row-based, no reset on import, no delete at end
-func (d *DataExtensionService) UpdateDataRetentionViaAPI(ctx context.Context, client sforce.SalesforceClient, dataExtensionID string) error {
+func (d *DataExtensionService) UpdateDataRetentionViaAPI(ctx context.Context, client salesforce.SalesforceClient, dataExtensionID string) error {
 	// Create the retention properties payload as specified
-	retention := &sforce.DataRetentionProperties{
+	retention := &salesforce.DataRetentionProperties{
 		DataRetentionPeriodLength:        1,
 		DataRetentionPeriodUnitOfMeasure: 5, // 5 = months
 		IsDeleteAtEndOfRetentionPeriod:   false,

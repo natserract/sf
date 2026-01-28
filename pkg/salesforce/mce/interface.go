@@ -1,4 +1,4 @@
-package main
+package salesforce
 
 // SalesforceClient defines the interface for Salesforce API operations
 type SalesforceClient interface {

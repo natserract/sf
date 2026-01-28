@@ -6,8 +6,8 @@ import (
 	"os"
 	"sort"
 
-	"github.com/natserract/sforce/pkg/config"
-	"github.com/natserract/sforce/pkg/sforce"
+	"github.com/natserract/sf/pkg/config"
+	salesforce "github.com/natserract/sf/pkg/salesforce/mce"
 	"go.uber.org/zap"
 )
 
@@ -32,7 +32,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	client := sforce.NewSalesforceWithLogger(cfg, logger)
+	client := salesforce.NewSalesforceWithLogger(cfg, logger)
 
 	// Phase 1 – full folder set
 	folderIDs, err := collectAllFolderIDs(client, logger)
@@ -89,7 +89,7 @@ func main() {
 
 // collectAllFolderIDs returns a unique slice of folder IDs by traversing
 // GetFolders() and recursively GetSubFolders until no new IDs are found.
-func collectAllFolderIDs(client sforce.SalesforceClient, logger *zap.Logger) ([]string, error) {
+func collectAllFolderIDs(client salesforce.SalesforceClient, logger *zap.Logger) ([]string, error) {
 	seen := make(map[string]bool)
 	var queue []string
 
@@ -129,8 +129,8 @@ func collectAllFolderIDs(client sforce.SalesforceClient, logger *zap.Logger) ([]
 
 // fetchAllDataExtensions calls GetDataExtensions for each folder ID with
 // pagination (loop until len(resp.Items) < pageSize) and returns one slice.
-func fetchAllDataExtensions(client sforce.SalesforceClient, folderIDs []string, logger *zap.Logger) ([]sforce.DataExtension, error) {
-	var all []sforce.DataExtension
+func fetchAllDataExtensions(client salesforce.SalesforceClient, folderIDs []string, logger *zap.Logger) ([]salesforce.DataExtension, error) {
+	var all []salesforce.DataExtension
 	for _, folderID := range folderIDs {
 		page := 1
 		for {

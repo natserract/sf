@@ -1,10 +1,10 @@
-# SForce
+# Data Retention
 
 A Go application for synchronizing Salesforce Marketing Cloud folders, subfolders, and data extensions, and managing data retention properties. This tool helps automate the process of updating data retention settings across multiple data extensions in Salesforce Marketing Cloud.
 
 ## Overview
 
-SForce provides two main functionalities:
+Provides two main functionalities:
 1. **Sync**: Fetches and stores folders, subfolders, and data extensions from Salesforce Marketing Cloud into a PostgreSQL database
 2. **Update Retention**: Updates data retention properties for specific data extensions
 

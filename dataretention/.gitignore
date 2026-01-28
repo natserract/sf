@@ -1,2 +1,4 @@
 ./export_top_dataextensions
 ./sforce
+.env.dev
+.env.prod
