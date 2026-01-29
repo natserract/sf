@@ -1,0 +1,57 @@
+%%[ IF (_MessageContext == "Preview") THEN ]%% %%[ ENDIF var @emailAddress, @DEname, @Recomendations1, @Recommendations2
+SET @DEname = "Product-Spotlight" SET @emailAddress = [emailAddress] SET @resultSet = LookupRows(@DEname,
+'emailAddress', @emailAddress) SET @count = ROWCOUNT(@resultSet) IF (@count > 0) THEN SET @class = Row(@resultSet,
+@count) SET @ContactKey = Field(@class, 'ContactKey') /*SET @Trigger_Type = Field(@class, 'Trigger_Type')*/ SET
+@Trigger_Segment = Field(@class, 'Trigger_Segment') SET @Trigger_Action = Field(@class, 'Trigger_Action') SET
+@Trigger_Catalog_Items = Field(@class, 'Trigger_Catalog_Items') SET @Campaign = Field(@class, 'Campaign') SET
+@Experience = Field(@class, 'Experience') SET @emailAddress = Field(@class, 'emailAddress') SET @Recommendations =
+Field(@class, 'Recommendations') SET @Recommendations2 = Field(@class, 'Recommendations2') SET @Recommendations3 =
+Field(@class, 'Recommendations3') ENDIF ]%%
+<script runat="server">
+    Platform.Load('core', '1');
+
+    var Trigger_Catalog_Items = Variable.GetValue('@Trigger_Catalog_Items');
+
+    var DEname = Variable.GetValue('@DEname');
+
+    var emailAddress = Variable.GetValue('@emailAddress');
+
+    var Recommendations = Variable.GetValue('@Recommendations');
+
+    var Recommendations3 = Variable.GetValue('@Recommendations3');
+
+    /*var Trigger_Catalog_Items = Platform.Function.Lookup(DEname,'Trigger_Catalog_Items',['ContactKey', 'Send'],[emailAddress, 'False']);*/
+
+    var obj = Platform.Function.ParseJSON(Recommendations);
+
+    for (i = 0; i < obj.length; i++) {
+        var j = i + 1;
+        Variable.SetValue("@price" + j, obj[i].price);
+        Variable.SetValue("@imageUrl" + j, obj[i].imageUrl);
+        Variable.SetValue("@name" + j, obj[i].name);
+        Variable.SetValue("@id" + j, obj[i].id);
+        Variable.SetValue("@url" + j, obj[i].url);
+    }
+
+    var objR = Platform.Function.ParseJSON(Recommendations3);
+
+    for (i = 0; i < objR.length; i++) {
+        var j = i + 1;
+        Variable.SetValue("@priceR" + j, objR[i].price);
+        Variable.SetValue("@imageUrlR" + j, objR[i].imageUrl);
+        Variable.SetValue("@nameR" + j, objR[i].name);
+        Variable.SetValue("@idR" + j, objR[i].id);
+        Variable.SetValue("@urlR" + j, objR[i].url);
+    }
+</script>%%[ SET @price1= @price1 SET @imageUrl1= @imageUrl1 SET @name1= @name1 SET @id1= @id1 Set @url1 = @url1 SET
+@price2= @price2 SET @imageUrl2= @imageUrl2 SET @name2= @name2 SET @id2= @id2 SET @url2= @url2 SET @price3= @price3 SET
+@imageUrl3= @imageUrl3 SET @name3= @name3 SET @id3= @id3 SET @url3= @url3 SET @price4= @price4 SET @imageUrl4=
+@imageUrl4 SET @name4= @name4 SET @id4= @id4 SET @url4= @url4
+SET @priceR1= @priceR1 SET @imageUrlR1= @imageUrlR1 SET @nameR1= @nameR1 SET @idR1= @idR1 SET @urlR1= @urlR1 SET
+@priceR2= @priceR2 SET @imageUrlR2= @imageUrlR2 SET @nameR2= @nameR2 SET @idR2= @idR2 SET @urlR2= @urlR2 SET @priceR3=
+@priceR3 SET @imageUrlR3= @imageUrlR3 SET @nameR3= @nameR3 SET @idR3= @idR3 SET @urlR3= @urlR3
+SET @resultSet = LookupRows('MemberDropFile', 'Email', @emailAddress) SET @count = ROWCOUNT(@resultSet) IF (@count > 0)
+THEN SET @class = Row(@resultSet, 1) SET @First_name = Field(@class, 'First_name') SET @Last_name = Field(@class,
+'Last_name') SET @Slab_name = Field(@class, 'Slab_name') SET @Loyalty_points = Field(@class, 'Loyalty_points') ENDIF IF
+empty(@Loyalty_points) THEN SET @Loyalty_points = 0 ELSE SET @Loyalty_points = FormatNumber(@Loyalty_points, "N0",
+"en-US") ENDIF ]%%

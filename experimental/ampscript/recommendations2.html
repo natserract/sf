@@ -1,0 +1,109 @@
+%%[
+var @dash
+set @dash = "..."
+set @lengthNameR1 = Length(@nameR1)
+IF @lengthNameR1 > 40 THEN
+set @nameR1 = Substring(@nameR1, 1,40)
+set @nameR1 = Concat(@nameR1, @dash)
+ELSE
+set @nameR1 = @nameR1
+ENDIF
+]%%
+%%[
+var @dash
+set @dash = "..."
+set @lengthNameR2 = Length(@nameR2)
+IF @lengthNameR2 > 40 THEN
+set @nameR2 = Substring(@nameR2, 1,40)
+set @nameR2 = Concat(@nameR2, @dash)
+ELSE
+set @nameR2 = @nameR2
+ENDIF
+]%%
+%%[
+var @dash
+set @dash = "..."
+set @lengthNameR3 = Length(@nameR3)
+IF @lengthNameR3 > 40 THEN
+set @nameR3 = Substring(@nameR3, 1,40)
+set @nameR3 = Concat(@nameR3, @dash)
+ELSE
+set @nameR3 = @nameR3
+ENDIF
+]%%
+%%[
+var @dash
+set @dash = "..."
+set @lengthNameR4 = Length(@nameR4)
+IF @lengthNameR4 > 40 THEN
+set @nameR4 = Substring(@nameR4, 1,40)
+set @nameR4 = Concat(@nameR4, @dash)
+ELSE
+set @nameR4 = @nameR4
+ENDIF
+]%%
+
+<table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">
+
+    <!-- ROW 1 -->
+    <tr>
+        %%[ IF (v(@nameR1)!=v(@name1)) AND (NOT EMPTY(v(@priceR1))) THEN ]%%
+        <td width="50%" align="center" valign="top" style="padding:20px;">
+            <a href="%%=redirectto(@urlR1)=%%" conversion="true">
+                <img src="%%=v(@imageUrlR1)=%%" width="100%" style="max-width:180px;border:0;">
+            </a>
+            <div style="text-align:left;font-size:13px;line-height:1.3;margin-top:8px;">
+                %%=v(@nameR1)=%%
+            </div>
+            <div style="text-align:left;font-size:14px;font-weight:bold;">
+                Rp %%=FormatNumber(v(@priceR1),"N0","en-US")=%%
+            </div>
+        </td>
+        %%[ ENDIF ]%%
+
+        %%[ IF (v(@nameR2)!=v(@name1)) AND (NOT EMPTY(v(@priceR2))) THEN ]%%
+        <td width="50%" align="center" valign="top" style="padding:20px;">
+            <a href="%%=redirectto(@urlR2)=%%" conversion="true">
+                <img src="%%=v(@imageUrlR2)=%%" width="100%" style="max-width:180px;border:0;">
+            </a>
+            <div style="text-align:left;font-size:13px;line-height:1.3;margin-top:8px;">
+                %%=v(@nameR2)=%%
+            </div>
+            <div style="text-align:left;font-size:14px;font-weight:bold;">
+                Rp %%=FormatNumber(v(@priceR2),"N0","en-US")=%%
+            </div>
+        </td>
+        %%[ ENDIF ]%%
+    </tr>
+
+    <!-- ROW 2 -->
+    <tr>
+        %%[ IF (v(@nameR3)!=v(@name1)) AND (NOT EMPTY(v(@priceR3))) THEN ]%%
+        <td width="50%" align="center" valign="top" style="padding:20px;">
+            <a href="%%=redirectto(@urlR3)=%%" conversion="true">
+                <img src="%%=v(@imageUrlR3)=%%" width="100%" style="max-width:180px;border:0;">
+            </a>
+            <div style="text-align:left;font-size:13px;line-height:1.3;margin-top:8px;">
+                %%=v(@nameR1)=%%
+            </div>
+            <div style="text-align:left;font-size:14px;font-weight:bold;">
+                Rp %%=FormatNumber(v(@priceR3),"N0","en-US")=%%
+            </div>
+        </td>
+        %%[ ENDIF ]%%
+
+        %%[ IF (v(@nameR4)!=v(@name1)) AND (NOT EMPTY(v(@priceR4))) THEN ]%%
+        <td width="50%" align="center" valign="top" style="padding:20px;">
+            <a href="%%=redirectto(@urlR4)=%%" conversion="true">
+                <img src="%%=v(@imageUrlR4)=%%" width="100%" style="max-width:180px;border:0;">
+            </a>
+            <div style="text-align:left;font-size:13px;line-height:1.3;margin-top:8px;">
+                %%=v(@nameR2)=%%
+            </div>
+            <div style="text-align:left;font-size:14px;font-weight:bold;">
+                Rp %%=FormatNumber(v(@priceR4),"N0","en-US")=%%
+            </div>
+        </td>
+        %%[ ENDIF ]%%
+    </tr>
+</table>
