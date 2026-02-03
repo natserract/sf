@@ -16,12 +16,12 @@ Because Apex is tightly integrated with the database, you can access Salesforce 
 ## Running Apex 
 ### Developer Console
 1. To open the Developer Console from Lightning Experience: Click the quick access menu (Gear icon in upper right of Salesforce org), then click Developer Console.
+
 ![Developer Console](screenshots/goto_developer_console.png)
 
 2. Debug -> Open Execute Anonymous Window
+
 ![Run](screenshots/run.png)
-
-
 
 ### Running Locally using Salesforce CLI
 1. Install Salesforce CLI https://developer.salesforce.com/docs/atlas.en-us.sfdx_setup.meta/sfdx_setup/sfdx_setup_install_cli.htm
@@ -38,4 +38,5 @@ sf apex generate class --name StringListTest
 sf apex run --file StringListTest/StringListTest.apex -o <ORG_NAME>
 ```
 
-5. See More https://developer.salesforce.com/docs/atlas.en-us.sfdx_cli_reference.meta/sfdx_cli_reference/cli_reference_apex_commands_unified.htm
+## Additional Readings
+- Salesforce CLI https://developer.salesforce.com/docs/atlas.en-us.sfdx_cli_reference.meta/sfdx_cli_reference/cli_reference_apex_commands_unified.htm
