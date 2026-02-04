@@ -29,5 +29,9 @@
 | https://login.salesforce.com    | Production, Trailhead Playground, and Developer orgs. |
 | Custom My Domain base URL        | Org with a custom domain.                              |
 
+## Roadmap
+- https://github.com/ChuckJonas/Salesforce-Developer-Roadmap
+- https://trailhead.salesforce.com/users/yshrivastava/trailmixes/beginner-to-advanced-developer-roadmap
+
 ## References
 - https://docs.google.com/document/d/1PstuLA6wGHFjNtI5LA4-yqGxUr5KKytfJGH1B23dPLY/edit?usp=sharing 

@@ -1,0 +1,11 @@
+<script runat="server">
+Platform.Load("Core","1.1.5");
+
+/* SSJS logic */
+var pageTitle = "Welcome to CloudPages";
+var userId = Request.GetQueryStringParameter("uid") || "Guest";
+
+/* Expose variables to AMPscript */
+Variable.SetValue("@pageTitle", pageTitle);
+Variable.SetValue("@userId", userId);
+</script>

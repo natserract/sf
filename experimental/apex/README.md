@@ -40,3 +40,4 @@ sf apex run --file StringListTest/StringListTest.apex -o <ORG_NAME>
 
 ## Additional Readings
 - Salesforce CLI https://developer.salesforce.com/docs/atlas.en-us.sfdx_cli_reference.meta/sfdx_cli_reference/cli_reference_apex_commands_unified.htm
+- Building package https://github.com/calcom/cal.com/tree/main/packages/app-store/salesforce 
