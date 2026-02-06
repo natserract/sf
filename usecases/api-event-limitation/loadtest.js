@@ -3,7 +3,6 @@ import { check, sleep } from 'k6';
 import { Rate, Trend, Counter } from 'k6/metrics';
 import { randomString, randomItem } from 'https://jslib.k6.io/k6-utils/1.2.0/index.js';
 
-
 // Custom Metrics
 const apiErrors = new Counter('api_errors');
 const apiSuccess = new Counter('api_success');
