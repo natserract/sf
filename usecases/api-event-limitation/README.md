@@ -12,7 +12,7 @@
     Maksimal 200 record yang diproses.
     Jika satu objek memenuhi banyak kriteria event, batas ini bisa cepat tercapai. Batas ini juga dipakai bersama dengan trigger dan flow lain di Salesforce.
 
-** Additional References**:
+**Additional References**:
 - https://help.salesforce.com/s/articleView?id=mktg.mc_overview_limits_api.htm&type=5
 - https://help.salesforce.com/s/articleView?id=mktg.mc_jb_salesforce_data_event.htm&type=5
 - https://developer.salesforce.com/docs/marketing/marketing-cloud/guide/how-to-fire-an-event.html
