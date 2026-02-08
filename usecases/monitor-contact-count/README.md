@@ -16,14 +16,14 @@ To monitor contact count and control costs in Marketing Cloud, here are the best
     > Ensure enable `audiences_read` scope first
 
 2. Configure Automation Studio to send email notifications or alerts when the contact count approaches the limit. - This helps in taking proactive actions to avoid overages.
-3. If the contact count exceeds the limit, stop active journeys to prevent further contact usage. - Use the REST API endpoint `/interaction/v1/interactions/{id}/stop` to stop a journey programmatically. Reference: https://developer.salesforce.com/docs/marketing/marketing-cloud/references/mc_rest_interaction/postStopInteractionById.html
+3. If the contact count exceeds the limit, stop active journeys to prevent further contact usage. Use the REST API endpoint `/interaction/v1/interactions/{id}/stop` to stop a journey programmatically. Reference: https://developer.salesforce.com/docs/marketing/marketing-cloud/references/mc_rest_interaction/postStopInteractionById.html
 
     To implement this, we can use [Script Activity](https://help.salesforce.com/s/articleView?id=mktg.mc_as_create_a_script_activity.htm&type=5) to get contacts through SSJS.
 
     Or, use [SQL Query Activity](https://help.salesforce.com/s/articleView?id=mktg.mc_as_query_find_subscriber_status_ref.htm&type=5) to retrieve contacts count
 
-4. Pause Journeys, temporarily pause journeys to halt processing contacts and sending messages. - This can be done manually in Journey Builder or programmatically using APIs Reference: https://help.salesforce.com/s/articleView?id=mktg.mc_jb_stop_journey.htm&type=5&release=260.0.0 1 
-5. Manage Contact Deletion, Regularly review and delete unused or outdated contacts to free up space. - Use Contact Builder to manage and delete contacts efficiently.
+4. Pause Journeys, temporarily pause journeys to halt processing contacts and sending messages. This can be done manually in Journey Builder or programmatically using APIs Reference: https://help.salesforce.com/s/articleView?id=mktg.mc_jb_stop_journey.htm&type=5&release=260.0.0 1 
+5. Manage Contact Deletion, Regularly review and delete unused or outdated contacts to free up space. Use Contact Builder to manage and delete contacts efficiently.
 
 
 ### Additional
@@ -31,4 +31,8 @@ To monitor contact count and control costs in Marketing Cloud, here are the best
 
 
 ## Notes
-- Sync Data Extensions: Records from the Lead, Contact, and User objects. Note: For Person Accounts, they are registered as Contacts based on the underlying Contact object record. If you synchronize these objects from Salesforce CRM via Sync DE, they are automatically registered as Marketing Cloud Contacts. Ref: https://help.salesforce.com/s/articleView?id=005166927&type=1
+- Sync Data Extensions: Records from the Lead, Contact, and User objects. Note: For Person Accounts, they are registered as Contacts based on the underlying Contact object record. If you synchronize these objects from Salesforce CRM via Sync DE, they are automatically registered as Marketing Cloud Contacts.
+
+    If your Contact count is increasing unexpectedly due to this, consider configuring Synchronization Filters to sync only necessary records. Alternatively, you can use Email Studio Imports to bring in Salesforce Object reports as standard Data Extensions (which do not auto-register Contacts) or use Data Loader to export from CRM and import into MCE. Unless you review this configuration, deleted contacts will be immediately re-introduced by the sync process, requiring deletion again.
+
+    Ref: https://help.salesforce.com/s/articleView?id=005166927&type=1
