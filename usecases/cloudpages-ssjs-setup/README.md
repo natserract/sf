@@ -1,4 +1,4 @@
-# Cloud Pages
+# Cloud Pages Setup
 
 CloudPages combines the best of Marketing Cloud Engagement to capture, organize, and act on prospect data. Use capture forms to grow your audience and then nurture those prospects with a journey. Optimize your content for distinct mobile, social, and web experiences to catch those prospects wherever they are. Built-in reports help you monitor performance and optimize as you go.
 
