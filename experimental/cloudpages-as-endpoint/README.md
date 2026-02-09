@@ -92,3 +92,17 @@ Use this template
 }
 </script>
 ```
+
+## Running
+
+Trigger this endpoint:
+```bash
+POST /xxx HTTP/1.1
+Host: xxx.pub.sfmc-content.com
+Content-Type: application/json
+Content-Length: 17
+
+{
+    "username": "natserract"
+}
+```
