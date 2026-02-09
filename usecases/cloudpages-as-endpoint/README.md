@@ -14,9 +14,10 @@ One way to expose an endpoint-like URL inside SFMC is to use a CloudPages Code R
 - What they DO impact, is the number of consumed Super Messages, which is a billable unit, similar to your emails. Each Cloud Page impression equals 1 Super Message. (Only for landing page, need confirm to support) 
 - API Limits: While landing pages don't inherently consume API calls, if they trigger SSJS/AMPscript to call the API, they are subject to **standard daily and concurrent API limits**.
 - Performance & Rendering: Complex scripts (AMPscript/SSJS) or excessive data lookups (LookupRows()) can cause pages to load slowly or time out.
+- Can't implement retryable
 
 ## Notes
-WSProxy doesn't requires Auth, client id or secret
+- WSProxy doesn't requires Auth, client id or secret
 
 ## Implementation
 
