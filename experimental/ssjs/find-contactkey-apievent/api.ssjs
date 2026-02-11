@@ -116,7 +116,7 @@
 
             // Make auth request
             var authEndpoint =
-                "https://mcp8sxks0l6bqgjd15cdn6fkq7b1.auth.marketingcloudapis.com/v2/token";
+                "https://xx.auth.marketingcloudapis.com/v2/token";
 
             var payload = {
                 grant_type: "client_credentials",
