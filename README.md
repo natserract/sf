@@ -35,3 +35,4 @@
 
 ## References
 - https://docs.google.com/document/d/1PstuLA6wGHFjNtI5LA4-yqGxUr5KKytfJGH1B23dPLY/edit?usp=sharing 
+- https://github.com/JoernBerkefeld/SFMC-Cookbook
