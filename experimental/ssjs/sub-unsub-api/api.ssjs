@@ -6,6 +6,98 @@
 
     var API_KEYS_DE = "API_Keys";
 
+    ///////// Main API Handler
+    try {
+      var apiKey = getApiKey();
+      var validation = validateApiKey(apiKey);
+
+      var requestData;
+      var postData = Platform.Request.GetPostData(); // Try to get POST data first
+
+      // Check API KEY first
+      if (!validation.valid) {
+        sendResponse("401 Unauthorized", {
+          success: false,
+          error: validation.reason
+        });
+        return;
+      }
+
+      // Ensure payload doesn't empty
+      if (postData && postData !== "") {
+        // POST request
+        try {
+          requestData = Platform.Function.ParseJSON(postData);
+        } catch (ex) {
+          sendResponse("400 Bad Request", {
+            success: false,
+            error: "Invalid JSON in request body"
+          });
+          return;
+        }
+      } else {
+        sendResponse("400 Bad Request", {
+          success: false,
+          error: "Payload was empty"
+        });
+        return;
+      }
+
+      // Get action type
+      var action = requestData.action || "";
+      var subscriberKey = requestData.subscriberKey || "";
+      var emailAddress = requestData.emailAddress || "";
+
+      // Validate required fields
+      if (!subscriberKey || !emailAddress) {
+        sendResponse("400 Bad Request", {
+          success: false,
+          error: "subscriberKey and emailAddress are required"
+        });
+        return;
+      }
+
+      // Validate action parameter
+      if (!action) {
+        sendResponse("400 Bad Request", {
+          success: false,
+          error: "action parameter is required (unsubscribe or subscribe)"
+        });
+        return;
+      }
+
+      // Route to appropriate function based on action
+      var result;
+      switch (action.toLowerCase()) {
+        case "unsubscribe":
+          result = globalUnsubscribe(subscriberKey, emailAddress);
+          break;
+
+        case "subscribe":
+          result = globalSubscribe(subscriberKey, emailAddress);
+          break;
+
+        default:
+          sendResponse("400 Bad Request", {
+            success: false,
+            error: "Invalid action. Allowed values: 'unsubscribe' or 'subscribe'"
+          });
+          return;
+      }
+
+      // Send response
+      if (result.success) {
+        sendResponse("200 OK", result);
+      } else {
+        sendResponse("500 Internal Server Error", result);
+      }
+    } catch (ex) {
+      sendResponse("500 Internal Server Error", {
+        success: false,
+        error: "Server error: " + ex.toString()
+      });
+    }
+
     ///////// UTILS
     function sendResponse(statusCode, data) {
       HTTPHeader.SetValue("Status", statusCode);
@@ -150,97 +242,5 @@
           error: ex.toString()
         };
       }
-    }
-
-    ///////// Main API Handler
-    try {
-      var apiKey = getApiKey();
-      var validation = validateApiKey(apiKey);
-
-      var requestData;
-      var postData = Platform.Request.GetPostData(); // Try to get POST data first
-
-      // Check API KEY first
-      if (!validation.valid) {
-        sendResponse("401 Unauthorized", {
-          success: false,
-          error: validation.reason
-        });
-        return;
-      }
-
-      // Ensure payload doesn't empty
-      if (postData && postData !== "") {
-        // POST request
-        try {
-          requestData = Platform.Function.ParseJSON(postData);
-        } catch (ex) {
-          sendResponse("400 Bad Request", {
-            success: false,
-            error: "Invalid JSON in request body"
-          });
-          return;
-        }
-      } else {
-        sendResponse("400 Bad Request", {
-          success: false,
-          error: "Payload was empty"
-        });
-        return;
-      }
-
-      // Get action type
-      var action = requestData.action || "";
-      var subscriberKey = requestData.subscriberKey || "";
-      var emailAddress = requestData.emailAddress || "";
-
-      // Validate required fields
-      if (!subscriberKey || !emailAddress) {
-        sendResponse("400 Bad Request", {
-          success: false,
-          error: "subscriberKey and emailAddress are required"
-        });
-        return;
-      }
-
-      // Validate action parameter
-      if (!action) {
-        sendResponse("400 Bad Request", {
-          success: false,
-          error: "action parameter is required (unsubscribe or subscribe)"
-        });
-        return;
-      }
-
-      // Route to appropriate function based on action
-      var result;
-      switch (action.toLowerCase()) {
-        case "unsubscribe":
-          result = globalUnsubscribe(subscriberKey, emailAddress);
-          break;
-
-        case "subscribe":
-          result = globalSubscribe(subscriberKey, emailAddress);
-          break;
-
-        default:
-          sendResponse("400 Bad Request", {
-            success: false,
-            error: "Invalid action. Allowed values: 'unsubscribe' or 'subscribe'"
-          });
-          return;
-      }
-
-      // Send response
-      if (result.success) {
-        sendResponse("200 OK", result);
-      } else {
-        sendResponse("500 Internal Server Error", result);
-      }
-    } catch (ex) {
-      sendResponse("500 Internal Server Error", {
-        success: false,
-        error: "Server error: " + ex.toString()
-      });
     }
 </script>
