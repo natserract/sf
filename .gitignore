@@ -4,3 +4,4 @@
 .env.dev
 .env.prod
 .sfdx
+experimental/export_recipes/recipes.json
