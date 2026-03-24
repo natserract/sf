@@ -147,7 +147,8 @@
                 "Auth",
                 "",
                 "",
-                ""
+                "",
+                postData || ""
             );
             return;
         }
@@ -167,12 +168,21 @@
                     "Validation",
                     ex && ex.stack ? ex.stack : "",
                     "",
-                    ""
+                    "",
+                    postData || ""
                 );
                 return;
             }
         } else {
-            returnErrorAndLog(400, "Payload was empty", "Validation", "", "", "");
+            returnErrorAndLog(
+                400,
+                "Payload was empty",
+                "Validation",
+                "",
+                "",
+                "",
+                postData || ""
+            );
             return;
         }
 
@@ -188,7 +198,8 @@
                 "Validation",
                 "",
                 dataEmail,
-                dataEmail
+                dataEmail,
+                postData || ""
             );
             return;
         }
@@ -204,7 +215,8 @@
                 "Validation",
                 "",
                 "",
-                ""
+                "",
+                postData || ""
             );
             return;
         }
@@ -233,7 +245,8 @@
                     "ContactLookup",
                     "",
                     eventData.email,
-                    eventData.email
+                    eventData.email,
+                    postData || ""
                 );
                 return;
             }
@@ -261,7 +274,8 @@
                 "ApiEvent",
                 "",
                 eventData.email,
-                contactKey
+                contactKey,
+                postData || ""
             );
             return;
         }
@@ -291,7 +305,8 @@
             "Server",
             ex && ex.stack ? ex.stack : "",
             serverErrorEmail,
-            serverErrorEmail
+            serverErrorEmail,
+            postData || ""
         );
     }
 
@@ -528,9 +543,16 @@
                     result.Response && result.Response[0]
                         ? String(result.Response[0])
                         : "";
+                var reason = "API Event Error - Response: " + errBody;
+                try {
+                    var errJson = Platform.Function.ParseJSON(errBody);
+                    if (errJson && errJson.message) {
+                        reason = errJson.message;
+                    }
+                } catch (e) {}
                 return {
                     valid: false,
-                    reason: "API Event Error - Response: " + errBody,
+                    reason: reason,
                     statusCode: result.StatusCode
                 };
             }
@@ -544,32 +566,39 @@
 
     ///////// UTILS
     /**
-     * Current timestamp for error log. Avoids Date.prototype.toISOString (not available in SFMC SSJS).
+     * Current timestamp for error log. Uses Platform.Function.Now() so the time
+     * follows the SFMC account/server timezone (e.g. set to WIB for Jakarta).
      */
     function getErrorLogTimestamp() {
         try {
-            if (typeof Platform.Function.Now === "function") {
-                return String(Platform.Function.Now());
-            }
-        } catch (e) {}
-        try {
-            var d = new Date();
+            var d =
+                typeof Platform.Function.Now === "function"
+                    ? Platform.Function.Now()
+                    : new Date();
             var pad = function (n) {
-                return n < 10 ? "0" + n : String(n);
+                n = Number(n);
+                return (n < 10 ? "0" : "") + n;
             };
+            var y = d.getFullYear();
+            var mo = d.getMonth() + 1;
+            var day = d.getDate();
+            var h = d.getHours();
+            var min = d.getMinutes();
+            var sec = d.getSeconds();
+            if (isNaN(y) || isNaN(mo) || isNaN(day)) return "";
             return (
-                d.getFullYear() +
+                String(y) +
                 "-" +
-                pad(d.getMonth() + 1) +
+                pad(mo) +
                 "-" +
-                pad(d.getDate()) +
-                "T" +
-                pad(d.getHours()) +
+                pad(day) +
+                " " +
+                pad(h) +
                 ":" +
-                pad(d.getMinutes()) +
+                pad(min) +
                 ":" +
-                pad(d.getSeconds()) +
-                "Z"
+                pad(sec) +
+                ".000"
             );
         } catch (e) {
             return "";
@@ -594,9 +623,17 @@
         errorMessage,
         stackTrace,
         emailAddress,
-        subscriberKey
+        subscriberKey,
+        payloadData
     ) {
-        var errorLogId, typeStr, msgStr, stackStr, emailStr, subKeyStr, timestamp;
+        var errorLogId,
+            typeStr,
+            msgStr,
+            stackStr,
+            emailStr,
+            subKeyStr,
+            timestamp,
+            dataStr;
         try {
             errorLogId = Platform.Function.GUID();
             typeStr = truncateStr(errorType, 100) || "Unknown";
@@ -607,6 +644,10 @@
             );
             emailStr = truncateStr(emailAddress, 254) || "";
             subKeyStr = truncateStr(subscriberKey, 254) || "";
+            dataStr = truncateStr(
+                payloadData != null ? String(payloadData) : "",
+                4000
+            );
             timestamp = getErrorLogTimestamp();
 
             // Prefer DataExtension.Init (uses DE Customer Key "Loyalty_Error_Logs")
@@ -619,7 +660,8 @@
                     StackTrace: stackStr,
                     EmailAddress: emailStr,
                     ErrorTimestamp: timestamp,
-                    SubscriberKey: subKeyStr
+                    SubscriberKey: subKeyStr,
+                    Data: dataStr
                 });
                 return;
             } catch (deEx) {
@@ -633,7 +675,8 @@
                         "StackTrace",
                         "EmailAddress",
                         "ErrorTimestamp",
-                        "SubscriberKey"
+                        "SubscriberKey",
+                        "Data"
                     ],
                     [
                         errorLogId,
@@ -642,7 +685,8 @@
                         stackStr,
                         emailStr,
                         timestamp,
-                        subKeyStr
+                        subKeyStr,
+                        dataStr
                     ]
                 );
             }
@@ -666,7 +710,8 @@
         errorType,
         stackTrace,
         emailAddress,
-        subscriberKey
+        subscriberKey,
+        payloadData
     ) {
         var errorText;
         if (typeof message === "string") {
@@ -685,7 +730,8 @@
             errorText,
             stackTrace != null ? stackTrace : "",
             emailAddress != null ? emailAddress : "",
-            subscriberKey != null ? subscriberKey : ""
+            subscriberKey != null ? subscriberKey : "",
+            payloadData != null ? payloadData : ""
         );
     }
 
