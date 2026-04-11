@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Storage Usage Report</title>
+    <link rel="stylesheet" href="https://pyscript.net/releases/2024.1.1/core.css" />
+    <script type="module" src="https://pyscript.net/releases/2024.1.1/core.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Syne+Mono&family=Syne:wght@400;600;800&display=swap"
+        rel="stylesheet" />
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg: #0a0c0f;
+            --surface: #111418;
+            --border: #1e2530;
+            --accent: #00e5c0;
+            --accent2: #ff6b35;
+            --accent3: #a855f7;
+            --text: #e2e8f0;
+            --muted: #64748b;
+            --card: #151a22;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Syne', sans-serif;
+            min-height: 100vh;
+            padding: 2rem;
+            background-image:
+                radial-gradient(ellipse 60% 40% at 10% 0%, rgba(0, 229, 192, 0.06) 0%, transparent 60%),
+                radial-gradient(ellipse 50% 40% at 90% 100%, rgba(168, 85, 247, 0.06) 0%, transparent 60%);
+        }
+
+        header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 2.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .logo-block h1 {
+            font-size: clamp(1.4rem, 3vw, 2rem);
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            line-height: 1.1;
+        }
+
+        .logo-block h1 span {
+            color: var(--accent);
+        }
+
+        .logo-block p {
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-top: 0.3rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .upload-zone {
+            border: 1.5px dashed var(--border);
+            border-radius: 12px;
+            padding: 2.5rem 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.2s, background 0.2s;
+            background: var(--surface);
+            position: relative;
+            margin-bottom: 2rem;
+        }
+
+        .upload-zone:hover,
+        .upload-zone.drag-over {
+            border-color: var(--accent);
+            background: rgba(0, 229, 192, 0.04);
+        }
+
+        .upload-zone .icon {
+            font-size: 2.2rem;
+            margin-bottom: 0.8rem;
+            display: block;
+        }
+
+        .upload-zone p {
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+
+        .upload-zone strong {
+            color: var(--accent);
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        .upload-btn {
+            display: inline-block;
+            margin-top: 1rem;
+            padding: 0.55rem 1.4rem;
+            background: transparent;
+            border: 1.5px solid var(--accent);
+            color: var(--accent);
+            border-radius: 6px;
+            font-family: 'Syne', sans-serif;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            letter-spacing: 0.05em;
+            transition: background 0.2s, color 0.2s;
+        }
+
+        .upload-btn:hover {
+            background: var(--accent);
+            color: var(--bg);
+        }
+
+        #status {
+            font-family: 'Syne Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-bottom: 1.5rem;
+            min-height: 1.2em;
+        }
+
+        #status.ok {
+            color: var(--accent);
+        }
+
+        #status.err {
+            color: var(--accent2);
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .s-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.2rem 1rem;
+        }
+
+        .s-card .label {
+            font-size: 0.7rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.4rem;
+        }
+
+        .s-card .value {
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+
+        .s-card .unit {
+            font-size: 0.7rem;
+            color: var(--muted);
+            margin-left: 2px;
+        }
+
+        .accent-green {
+            color: var(--accent);
+        }
+
+        .accent-orange {
+            color: var(--accent2);
+        }
+
+        .accent-purple {
+            color: var(--accent3);
+        }
+
+        .alloc-bar-wrap {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.2rem 1.4rem;
+            margin-bottom: 2rem;
+        }
+
+        .alloc-bar-wrap .bar-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            color: var(--muted);
+            margin-bottom: 0.6rem;
+            font-family: 'Syne Mono', monospace;
+        }
+
+        .bar-track {
+            background: var(--border);
+            border-radius: 99px;
+            height: 10px;
+            overflow: hidden;
+        }
+
+        .bar-fill {
+            height: 100%;
+            border-radius: 99px;
+            background: linear-gradient(90deg, var(--accent), var(--accent3));
+            transition: width 0.8s cubic-bezier(.22, 1, .36, 1);
+            width: 0%;
+        }
+
+        .section-title {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            color: var(--muted);
+            margin-bottom: 0.8rem;
+            font-weight: 600;
+        }
+
+        .mid-table-wrap {
+            overflow-x: auto;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            margin-bottom: 2rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+            font-family: 'Syne Mono', monospace;
+        }
+
+        thead tr {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--muted);
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            color: var(--text);
+            white-space: nowrap;
+        }
+
+        tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        tbody tr:hover td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .td-mid {
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .td-gb {
+            color: var(--accent2);
+        }
+
+        .td-pct {
+            color: var(--muted);
+        }
+
+        .warn-box {
+            background: rgba(255, 107, 53, 0.08);
+            border: 1px solid rgba(255, 107, 53, 0.3);
+            border-radius: 8px;
+            padding: 0.8rem 1.2rem;
+            font-size: 0.82rem;
+            color: var(--accent2);
+            margin-bottom: 1.5rem;
+            font-family: 'Syne Mono', monospace;
+            display: none;
+        }
+
+        #output-section {
+            display: none;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        py-terminal {
+            display: none !important;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <div class="logo-block">
+            <h1>Storage<span>Report</span></h1>
+            <p>Data Extension Analyzer · PyScript</p>
+        </div>
+    </header>
+
+    <div class="upload-zone" id="drop-zone">
+        <span class="icon">📂</span>
+        <p>Drop your <strong>CSV</strong> file here, or click to browse</p>
+        <button class="upload-btn" onclick="document.getElementById('file-input').click()">Choose File</button>
+        <input type="file" id="file-input" accept=".csv" />
+    </div>
+
+    <div id="status">Waiting for CSV upload…</div>
+    <div class="warn-box" id="warn-box"></div>
+
+    <div id="output-section">
+        <div class="summary-grid">
+            <div class="s-card">
+                <div class="label">Total Allocated</div>
+                <div class="value accent-green">45.00<span class="unit">GB</span></div>
+            </div>
+            <div class="s-card">
+                <div class="label">Used</div>
+                <div class="value accent-orange" id="c-used">—</div>
+            </div>
+            <div class="s-card">
+                <div class="label">Free</div>
+                <div class="value accent-green" id="c-free">—</div>
+            </div>
+            <div class="s-card">
+                <div class="label">% Used</div>
+                <div class="value accent-purple" id="c-pct">—</div>
+            </div>
+            <div class="s-card">
+                <div class="label">Business Units</div>
+                <div class="value" id="c-bus">—</div>
+            </div>
+            <div class="s-card">
+                <div class="label">Data Extensions</div>
+                <div class="value" id="c-de">—</div>
+            </div>
+            <div class="s-card">
+                <div class="label">Total Records</div>
+                <div class="value" id="c-rec">—</div>
+            </div>
+        </div>
+
+        <div class="alloc-bar-wrap">
+            <div class="bar-label">
+                <span>STORAGE ALLOCATION</span>
+                <span id="bar-label-pct">0%</span>
+            </div>
+            <div class="bar-track">
+                <div class="bar-fill" id="bar-fill"></div>
+            </div>
+        </div>
+
+        <div class="section-title">Per MID Breakdown</div>
+        <div class="mid-table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>MID</th>
+                        <th>Business Unit</th>
+                        <th>Data Exts</th>
+                        <th>Records</th>
+                        <th>Used (GB)</th>
+                        <th>Used (TB)</th>
+                        <th>% of 45 GB</th>
+                    </tr>
+                </thead>
+                <tbody id="mid-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <py-config>
+        packages = ["pandas"]
+    </py-config>
+
+    <script type="py">
+import pandas as pd
+import io
+from js import document
+from pyodide.ffi import create_proxy
+
+TOTAL_ALLOC_GB = 45.0
+
+def set_text(el_id, val):
+    document.getElementById(el_id).innerHTML = val
+
+def run_report(csv_text):
+    df = pd.read_csv(io.StringIO(csv_text))
+    df["BusinessUnitName"] = df["BusinessUnitName"].str.strip()
+
+    invalid_mask  = pd.to_numeric(df["UsedGB"], errors="coerce").isna()
+    invalid_count = int(invalid_mask.sum())
+
+    df["UsedGB"]      = pd.to_numeric(df["UsedGB"],      errors="coerce").fillna(0.0)
+    df["RecordCount"] = pd.to_numeric(df["RecordCount"], errors="coerce").fillna(0).astype(int)
+
+    summary = (
+        df.groupby(["MID", "BusinessUnitName"])
+        .agg(
+            DataExtensions = ("DataExtensionName", "count"),
+            UsedGB         = ("UsedGB", "sum"),
+            TotalRecords   = ("RecordCount", "sum"),
+        )
+        .reset_index()
+    )
+    summary["UsedTB"]          = summary["UsedGB"] / 1024
+    summary["PctOfTotalAlloc"] = summary["UsedGB"] / TOTAL_ALLOC_GB * 100
+
+    total_used_gb = float(summary["UsedGB"].sum())
+    total_used_tb = total_used_gb / 1024
+    remaining_gb  = TOTAL_ALLOC_GB - total_used_gb
+    pct_used      = total_used_gb / TOTAL_ALLOC_GB * 100
+    total_de      = int(summary["DataExtensions"].sum())
+    total_records = int(summary["TotalRecords"].sum())
+    num_bus       = len(summary)
+
+    set_text("c-used", f'{total_used_gb:,.5f}<span class="unit">GB</span>')
+    set_text("c-free", f'{remaining_gb:,.2f}<span class="unit">GB</span>')
+    set_text("c-pct",  f'{pct_used:.4f}<span class="unit">%</span>')
+    set_text("c-bus",  str(num_bus))
+    set_text("c-de",   f'{total_de:,}')
+    set_text("c-rec",  f'{total_records:,}')
+
+    bar = document.getElementById("bar-fill")
+    bar.style.width = f"{min(pct_used, 100):.2f}%"
+    set_text("bar-label-pct", f"{pct_used:.4f}%")
+
+    tbody = document.getElementById("mid-tbody")
+    tbody.innerHTML = ""
+    for _, row in summary.iterrows():
+        tr = document.createElement("tr")
+        tr.innerHTML = (
+            f'<td class="td-mid">{row["MID"]}</td>'
+            f'<td>{row["BusinessUnitName"]}</td>'
+            f'<td>{int(row["DataExtensions"]):,}</td>'
+            f'<td>{int(row["TotalRecords"]):,}</td>'
+            f'<td class="td-gb">{row["UsedGB"]:.5f}</td>'
+            f'<td class="td-gb">{row["UsedTB"]:.6f}</td>'
+            f'<td class="td-pct">{row["PctOfTotalAlloc"]:.4f}%</td>'
+        )
+        tbody.appendChild(tr)
+
+    warn = document.getElementById("warn-box")
+    if invalid_count > 0:
+        warn.style.display = "block"
+        warn.textContent = f"⚠  {invalid_count} row(s) had non-numeric UsedGB (e.g. 'Data_Not_Available') — treated as 0 GB."
+    else:
+        warn.style.display = "none"
+
+    document.getElementById("output-section").style.display = "block"
+
+def handle_file(event):
+    status = document.getElementById("status")
+    status.className = ""
+    status.innerHTML = '<span class="spinner"></span> Processing…'
+
+    file = event.target.files.item(0)
+    if not file:
+        return
+
+    def on_load(e):
+        try:
+            csv_text = e.target.result
+            run_report(csv_text)
+            status.textContent = f"✓  Loaded: {file.name}"
+            status.className = "ok"
+        except Exception as ex:
+            status.textContent = f"Error: {ex}"
+            status.className = "err"
+
+    from js import FileReader
+    reader = FileReader.new()
+    reader.onload = create_proxy(on_load)
+    reader.readAsText(file)
+
+def on_dragover(e):
+    e.preventDefault()
+    document.getElementById("drop-zone").classList.add("drag-over")
+
+def on_dragleave(e):
+    document.getElementById("drop-zone").classList.remove("drag-over")
+
+def on_drop(e):
+    e.preventDefault()
+    drop_zone = document.getElementById("drop-zone")
+    drop_zone.classList.remove("drag-over")
+    files = e.dataTransfer.files
+    if files.length == 0:
+        return
+
+    status = document.getElementById("status")
+    status.className = ""
+    status.innerHTML = '<span class="spinner"></span> Processing…'
+    file = files.item(0)
+
+    def on_load(ev):
+        try:
+            csv_text = ev.target.result
+            run_report(csv_text)
+            status.textContent = f"✓  Loaded: {file.name}"
+            status.className = "ok"
+        except Exception as ex:
+            status.textContent = f"Error: {ex}"
+            status.className = "err"
+
+    from js import FileReader
+    reader = FileReader.new()
+    reader.onload = create_proxy(on_load)
+    reader.readAsText(file)
+
+file_input = document.getElementById("file-input")
+file_input.addEventListener("change", create_proxy(handle_file))
+
+drop_zone = document.getElementById("drop-zone")
+drop_zone.addEventListener("dragover",  create_proxy(on_dragover))
+drop_zone.addEventListener("dragleave", create_proxy(on_dragleave))
+drop_zone.addEventListener("drop",      create_proxy(on_drop))
+</script>
+
+</body>
+
+</html>
