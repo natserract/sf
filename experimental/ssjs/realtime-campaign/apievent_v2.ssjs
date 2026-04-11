@@ -223,34 +223,18 @@
 
         var contactKey;
         var contactAttempts = 0;
-        var skipLookup =
-            requestData.Options &&
-            requestData.Options.hasOwnProperty("GetContactKey") &&
-            requestData.Options.GetContactKey === "false";
-        if (skipLookup) {
-            contactKey = eventData.email;
-        } else {
-            // Step 1: Find contact key by email (with retry for transient failures)
-            var contactKeyRes = withRetry(function () {
-                return findContactKeyByEmail(eventData.email, accessToken);
-            }, isRetryableApi);
-            if (!contactKeyRes.result.valid) {
-                returnErrorAndLog(
-                    404,
-                    {
-                        success: false,
-                        error: "Contact not found for email: " + eventData.email,
-                        attempts: contactKeyRes.attempts
-                    },
-                    "ContactLookup",
-                    "",
-                    eventData.email,
-                    eventData.email,
-                    postData || ""
-                );
-                return;
-            }
+
+        // Step 1: Find contact key by email; fall back to email on any lookup failure
+        var contactKeyRes = withRetry(function () {
+            return findContactKeyByEmail(eventData.email, accessToken);
+        }, isRetryableApi);
+
+        if (contactKeyRes.result.valid) {
             contactKey = contactKeyRes.result.contactKey;
+            contactAttempts = contactKeyRes.attempts;
+        } else {
+            // Lookup failed (contact not found or API error) — use email as contact key
+            contactKey = eventData.email;
             contactAttempts = contactKeyRes.attempts;
         }
 
