@@ -44,5 +44,8 @@ I created [python script](./script.py) to automatically calculate and show usage
   Summary exported → storage_summary_by_mid.csv
 ```
 
-To make easy for all users, I create static page then deployed in CloudPages. You can see here [index.html](./index.html). What's inside there? _Python script run in browser_
+To make easy for all users, I create static page then deployed in CloudPages. You can see here [index.html](./index.html) or visit this page [http://storage.report](https://mcx3dk6gqx05byn626r3yqc9-hl0.pub.sfmc-content.com/uxvby1dgw35)
 
+What's inside there? _Python script run in browser_
+
+> It means we can run python in cloudpages also
