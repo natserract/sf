@@ -171,7 +171,7 @@
         // Trigger Create Contact
         var createContactResult = withRetry(function () {
             return createContact(
-                requestData.external_id,
+                requestData.contact_key,
                 {
                     email: requestData.email,
                     externalId: requestData.external_id,
@@ -200,6 +200,21 @@
                 postData || ""
             );
             return;
+        }
+
+        // Handle consent
+        if (requestData.email) {
+            var consentResult;
+            if (requestData.is_email_consent == "false") {
+                consentResult = globalUnsubscribe(
+                    requestData.contact_key,
+                    requestData.email
+                );
+            }
+            if (consentResult && !consentResult.success) {
+                returnError(500, consentResult);
+                return;
+            }
         }
 
         var successPayload = {
@@ -384,9 +399,10 @@
                 if (data.lastName && String(data.lastName).length > 0)
                     nameParts.push(data.lastName);
                 var displayName = nameParts.length > 0 ? nameParts.join(" ") : "";
-                if (displayName) {
-                    emailDemographics.push({ name: "Name", value: displayName });
-                }
+                emailDemographics.push({
+                    name: "Name",
+                    value: displayName
+                });
 
                 attributeSets.push({
                     name: "Email Addresses",
@@ -429,9 +445,17 @@
                         name: "First Name",
                         value: data.firstName
                     });
+                } else {
+                    mobileValues.push({
+                        name: "First Name",
+                        value: " "
+                    });
                 }
+
                 if (data.lastName && String(data.lastName).length > 0) {
                     mobileValues.push({ name: "Last Name", value: data.lastName });
+                } else {
+                    mobileValues.push({ name: "Last Name", value: " " });
                 }
 
                 attributeSets.push({
@@ -482,6 +506,85 @@
             return {
                 valid: false,
                 reason: ex.toString()
+            };
+        }
+    }
+
+    function globalUnsubscribe(contactKey, emailAddress) {
+        try {
+            var prox = new Script.Util.WSProxy();
+
+            var props = {
+                SubscriberKey: contactKey,
+                EmailAddress: emailAddress,
+                Status: "Unsubscribed"
+            };
+
+            var options = {
+                SaveOptions: [
+                    {
+                        PropertyName: "*",
+                        SaveAction: "UpdateAdd"
+                    }
+                ]
+            };
+
+            var result = prox.updateItem("Subscriber", props, options);
+            return {
+                success: result.Status === "OK",
+                status: result.Status,
+                message:
+                    result.Status === "OK"
+                        ? "Subscriber globally unsubscribed successfully"
+                        : "Global unsubscribe failed",
+                details: result.Results
+            };
+        } catch (ex) {
+            return {
+                success: false,
+                status: "Error",
+                message: "Exception occurred",
+                error: ex.toString()
+            };
+        }
+    }
+
+    // Function for global subscribe
+    function globalSubscribe(contactKey, emailAddress) {
+        try {
+            var prox = new Script.Util.WSProxy();
+
+            var props = {
+                SubscriberKey: contactKey,
+                EmailAddress: emailAddress,
+                Status: "Active"
+            };
+
+            var options = {
+                SaveOptions: [
+                    {
+                        PropertyName: "*",
+                        SaveAction: "UpdateAdd"
+                    }
+                ]
+            };
+
+            var result = prox.updateItem("Subscriber", props, options);
+            return {
+                success: result.Status === "OK",
+                status: result.Status,
+                message:
+                    result.Status === "OK"
+                        ? "Subscriber globally subscribed successfully"
+                        : "Global subscribe failed",
+                details: result.Results
+            };
+        } catch (ex) {
+            return {
+                success: false,
+                status: "Error",
+                message: "Exception occurred",
+                error: ex.toString()
             };
         }
     }
