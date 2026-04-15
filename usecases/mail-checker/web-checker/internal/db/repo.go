@@ -3,7 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
-	"sf/usecases/fetch-all-contacts-go/internal/api"
+	"sf/usecases/web-checker/fetch-all-contacts-go/internal/api"
 	"time"
 
 	"github.com/jackc/pgx/v5"

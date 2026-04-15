@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"sf/usecases/fetch-all-contacts-go/internal/api"
+	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/api"
 )
 
 type AuthManager struct {
@@ -120,4 +120,3 @@ func promptLine(r *bufio.Reader, out io.Writer, label string) (string, error) {
 	}
 	return strings.TrimSpace(line), nil
 }
-

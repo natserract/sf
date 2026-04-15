@@ -124,3 +124,54 @@ go run . status --run-id <RUN_ID>
 - This flow uses pre-seeded pagination: all pages are inserted to queue first for true parallel workers.
 - The API may return occasional transient failures; retries are persisted in DB.
 - Contact keys are trimmed before insert and stored as `bytea` for broad compatibility.
+
+## Email Validation Web Workflow (local-first)
+
+This project now includes a local web app to validate email values from CSV (`contactKey.value`) and compare raw-vs-cleaned values at scale.
+Validation engine is powered by [`truemail-go`](https://github.com/truemail-rb/truemail-go).
+
+### Start web app
+
+```bash
+go run . web --addr :8080 --workers 20
+```
+
+Open `http://localhost:8080/static/index.html`.
+The web command wiring is defined in `cmd_web.go`.
+
+### Workflow
+
+1. Upload CSV with `contactID.value` and `contactKey.value` columns.
+2. Backend creates a `validation_run` and stores each row in `validation_results`.
+3. Worker pool validates every row through:
+   - Syntax/format check (`truemail-go` regex mode)
+   - Domain + DNS/MX availability check (`truemail-go` mx mode)
+   - SMTP mailbox simulation (`truemail-go` smtp mode)
+4. UI displays paginated/virtualized results and row detail:
+   - Raw value from CSV (kept as-is)
+   - Cleaned value (wrapper removal)
+   - Normalized value (lowercase email used for checks)
+   - Score for each test and total score
+5. History is fetched lazily per selected row using `/api/history/fetch` and your bearer/csrf/cookie.
+
+### Scoring
+
+- Syntax: `25`
+- Domain DNS: `25`
+- MX: `25`
+- SMTP: `25`
+- Total: `0..100`
+
+### API summary
+
+- `POST /api/runs` (multipart `file`) -> create run + start processing
+- `GET /api/runs/:id` -> progress summary
+- `GET /api/runs/:id/results?offset=&limit=&q=` -> paginated rows
+- `GET /api/runs/:id/results/:rowId` -> detailed row diagnostics
+- `POST /api/history/fetch` -> on-demand Marketing Cloud message history fetch
+
+### Security & operational notes
+
+- Bearer/CSRF/Cookie are provided at history fetch time and are not required for CSV validation phases.
+- SMTP checks may fail depending on network/firewall/provider policy; failure details are stored per row.
+- For large CSV files, use higher worker count with caution and monitor DB/network limits.

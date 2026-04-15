@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"sf/usecases/fetch-all-contacts-go/internal/api"
+	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/api"
 )
 
 func TestAuthManager_ReauthenticateMaxAttempts(t *testing.T) {
@@ -64,4 +64,3 @@ func TestAuthManager_ReauthenticateSharedPrompt(t *testing.T) {
 		t.Fatalf("unexpected auth update: %#v", got)
 	}
 }
-

@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Email Validation Runner</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 16px; }
+    .layout { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
+    #listViewport { height: 560px; overflow: auto; border: 1px solid #ddd; border-radius: 8px; position: relative; }
+    #listScroller { position: relative; width: 100%; }
+    .row { position: absolute; left: 0; right: 0; height: 44px; border-bottom: 1px solid #f0f0f0; padding: 6px; cursor: pointer; }
+    .row:hover { background: #fafafa; }
+    .muted { color: #666; font-size: 12px; }
+    .ok { color: #15803d; }
+    .bad { color: #b91c1c; }
+    .pending { color: #92400e; }
+  </style>
+</head>
+<body>
+  <h2>Email Validation Web Workflow</h2>
+  <div class="card">
+    <input id="csvInput" type="file" accept=".csv" />
+    <button id="uploadBtn">Upload & Start</button>
+    <span id="runMeta" class="muted"></span>
+  </div>
+
+  <div class="layout">
+    <div class="card">
+      <h3>Results (virtualized)</h3>
+      <div id="stats" class="muted"></div>
+      <div id="listViewport"><div id="listScroller"></div></div>
+    </div>
+    <div class="card">
+      <h3>Row Detail</h3>
+      <pre id="detail">Select a row...</pre>
+      <h4>Fetch Message History</h4>
+      <input id="bearer" placeholder="Bearer token" style="width:100%; margin-bottom:8px;" />
+      <input id="csrf" placeholder="CSRF token" style="width:100%; margin-bottom:8px;" />
+      <input id="cookie" placeholder="Cookie" style="width:100%; margin-bottom:8px;" />
+      <button id="historyBtn">Fetch for selected row</button>
+      <pre id="historyOut"></pre>
+    </div>
+  </div>
+
+  <script>
+    const rowHeight = 44;
+    let runId = "";
+    let total = 0;
+    let items = [];
+    let selected = null;
+    const viewport = document.getElementById("listViewport");
+    const scroller = document.getElementById("listScroller");
+
+    async function jsonFetch(url, opts = {}) {
+      const res = await fetch(url, opts);
+      if (!res.ok) throw new Error(await res.text());
+      return await res.json();
+    }
+
+    async function createRun(file) {
+      const form = new FormData();
+      form.append("file", file);
+      return jsonFetch("/api/runs", { method: "POST", body: form });
+    }
+
+    async function fetchProgress() {
+      if (!runId) return;
+      const p = await jsonFetch(`/api/runs/${runId}`);
+      document.getElementById("stats").textContent =
+        `state=${p.state} total=${p.totalRows} pending=${p.pending} in_progress=${p.inProgress} done=${p.done} failed=${p.failed}`;
+    }
+
+    async function fetchPage(offset, limit) {
+      if (!runId) return;
+      const data = await jsonFetch(`/api/runs/${runId}/results?offset=${offset}&limit=${limit}`);
+      total = data.total;
+      items = data.items;
+      scroller.style.height = `${total * rowHeight}px`;
+      render(offset);
+    }
+
+    function render(offsetBase) {
+      scroller.innerHTML = "";
+      for (let i = 0; i < items.length; i++) {
+        const row = items[i];
+        const el = document.createElement("div");
+        el.className = "row";
+        el.style.top = `${(offsetBase + i) * rowHeight}px`;
+        const stateClass = row.status === "done" ? "ok" : row.status === "failed" ? "bad" : "pending";
+        el.innerHTML = `<div><strong>#${row.rowNumber}</strong> ${row.rawContactKey} -> ${row.normalizedEmail || "-"}</div>
+          <div class="muted ${stateClass}">status=${row.status} score=${row.totalScore} syntax=${row.syntaxStatus} dns=${row.domainDnsStatus} mx=${row.mxStatus} smtp=${row.smtpStatus}</div>`;
+        el.onclick = () => openDetail(row.id);
+        scroller.appendChild(el);
+      }
+    }
+
+    async function openDetail(rowId) {
+      const row = await jsonFetch(`/api/runs/${runId}/results/${rowId}`);
+      selected = row;
+      document.getElementById("detail").textContent = JSON.stringify(row, null, 2);
+    }
+
+    viewport.addEventListener("scroll", () => {
+      const first = Math.floor(viewport.scrollTop / rowHeight);
+      fetchPage(first, Math.max(60, Math.ceil(viewport.clientHeight / rowHeight) + 20));
+    });
+
+    document.getElementById("uploadBtn").onclick = async () => {
+      const file = document.getElementById("csvInput").files[0];
+      if (!file) return alert("Please choose a csv file");
+      const created = await createRun(file);
+      runId = created.runId;
+      document.getElementById("runMeta").textContent = `runId=${runId}, rows=${created.rows}`;
+      await fetchPage(0, 80);
+      await fetchProgress();
+      setInterval(fetchProgress, 3000);
+    };
+
+    document.getElementById("historyBtn").onclick = async () => {
+      if (!selected) return alert("Select a row first");
+      const payload = await jsonFetch("/api/history/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId,
+          rowId: selected.id,
+          contactId: selected.contactId,
+          bearerToken: document.getElementById("bearer").value,
+          csrfToken: document.getElementById("csrf").value,
+          cookie: document.getElementById("cookie").value
+        })
+      });
+      document.getElementById("historyOut").textContent = JSON.stringify(payload, null, 2);
+      openDetail(selected.id);
+    };
+  </script>
+</body>
+</html>

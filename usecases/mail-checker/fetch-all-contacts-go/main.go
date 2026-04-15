@@ -12,10 +12,10 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
-	"sf/usecases/fetch-all-contacts-go/internal/api"
-	"sf/usecases/fetch-all-contacts-go/internal/config"
-	"sf/usecases/fetch-all-contacts-go/internal/db"
-	"sf/usecases/fetch-all-contacts-go/internal/runner"
+	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/api"
+	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/config"
+	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/db"
+	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/runner"
 )
 
 func main() {
@@ -57,7 +57,6 @@ func main() {
 		}
 		return cfg, nil
 	}))
-
 	root.AddCommand(newFetchOnceCmd(func() (api.Auth, api.FetchPageParams, *api.Client, error) {
 		cfg, err := config.FromEnv()
 		if err != nil {
