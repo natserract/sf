@@ -1,0 +1,21 @@
+curl 'https://mc.s12.marketingcloudapps.com/contactsmeta/fuelapi/contacts-internal/v1/addresses/search/?$pageSize=25&$page=1&$orderBy=contactKey%20ASC' \
+  -H 'Accept: application/json, text/javascript, */*; q=0.01' \
+  -H 'Accept-Language: en-GB,en-US;q=0.9,en;q=0.8' \
+  -H 'Connection: keep-alive' \
+  -H 'Content-Type: application/json' \
+  -b '567c649970167cc328895c8cba7fd270=s%3A_ZK9hpGkgIs1fHkXglmZzCisZKWaJtFS.fK74IXhL%2BSqTv%2BDIan2vO1s6TeD1GVz55weZJNXkbqw' \
+  -H 'Origin: https://mc.s12.marketingcloudapps.com' \
+  -H 'Referer: https://mc.s12.marketingcloudapps.com/contactsmeta/admin.html' \
+  -H 'Sec-Fetch-Dest: empty' \
+  -H 'Sec-Fetch-Mode: cors' \
+  -H 'Sec-Fetch-Site: same-origin' \
+  -H 'Sec-Fetch-Storage-Access: active' \
+  -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36' \
+  -H 'X-CSRF-Token: 72001f9b0306d318216381c8af62777bbadd64ff7800596b77031434ba42b4de97327848847f1f4c997254d5cc88432ac2a248726a99238d64606ffa8f662057d719ed7c585ef37fd63b1e4202da4566a1a736edc9cd2ae34c68655981b4d1ea98ff309ed9060605665ce83c5ecfa081ae143946a8f4819119e91af3002a11dc' \
+  -H 'X-Requested-With: XMLHttpRequest' \
+  -H 'authorization: Bearer XX' \
+  -H 'sec-ch-ua: "Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"' \
+  -H 'sec-ch-ua-mobile: ?0' \
+  -H 'sec-ch-ua-platform: "macOS"' \
+  -H 'tz: accountPreference' \
+  --data-raw '{"queryFilter":{"hasCriteria":true,"rootExpressionSet":{"expressions":[{"customerDataDefinitionID":101,"operator":"Equal","values":["oon"]}]}}}'

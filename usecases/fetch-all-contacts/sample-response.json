@@ -1,0 +1,131 @@
+{
+    "pageNumber": 1,
+    "pageSize": 25,
+    "totalCount": 0,
+    "addresses": [
+        {
+            "contactID": {
+                "type": "string",
+                "value": "170016161"
+            },
+            "contactKey": {
+                "type": "string",
+                "value": " oon@gmail.com"
+            },
+            "contactTypeID": 0,
+            "addressTypeID": 4,
+            "addressID": {
+                "type": "string",
+                "value": ""
+            },
+            "addressKey": {
+                "type": "string",
+                "value": ""
+            },
+            "status": 0,
+            "ordinal": 0,
+            "source": 0,
+            "valueSets": [
+                {
+                    "objectState": "Created",
+                    "objectValidationState": "Unknown",
+                    "definitionID": "d5c8d3f2-08dd-4498-ad17-c071a7a496ca",
+                    "setDefinitionID": "d5c8d3f2-08dd-4498-ad17-c071a7a496ca",
+                    "definitionKey": "Primary",
+                    "setDefinitionKey": "Primary",
+                    "definitionName": "Primary",
+                    "name": "Primary",
+                    "values": [
+                        {
+                            "objectState": "Created",
+                            "objectValidationState": "Unknown",
+                            "definitionID": "a3712327-f318-41a2-857e-9ff038f7e36c",
+                            "valueDefinitionID": "a3712327-f318-41a2-857e-9ff038f7e36c",
+                            "definitionKey": "Ordinal",
+                            "valueDefinitionKey": "Ordinal",
+                            "definitionName": "Ordinal",
+                            "name": "Ordinal",
+                            "valueID": "38e01438-0ce1-42c5-b31e-2bedd589721d",
+                            "innerValue": "1"
+                        },
+                        {
+                            "objectState": "Created",
+                            "objectValidationState": "Unknown",
+                            "definitionID": "d1f0ef88-c064-4f97-a8ed-4e5ccb543d02",
+                            "valueDefinitionID": "d1f0ef88-c064-4f97-a8ed-4e5ccb543d02",
+                            "definitionKey": "CarrierID",
+                            "valueDefinitionKey": "CarrierID",
+                            "definitionName": "CarrierID",
+                            "name": "CarrierID",
+                            "valueID": "1c11ff17-54db-4b09-aed5-6f776d03a0c1",
+                            "innerValue": "0"
+                        },
+                        {
+                            "objectState": "Created",
+                            "objectValidationState": "Unknown",
+                            "definitionID": "5ae7da6f-16c9-4e99-b426-44522b0b439d",
+                            "valueDefinitionID": "5ae7da6f-16c9-4e99-b426-44522b0b439d",
+                            "definitionKey": "CreatedDate",
+                            "valueDefinitionKey": "CreatedDate",
+                            "definitionName": "CreatedDate",
+                            "name": "CreatedDate",
+                            "valueID": "897fede9-7500-4b4e-946f-f7318a65278a",
+                            "innerValue": "4/14/2026 1:54:15 PM"
+                        },
+                        {
+                            "objectState": "Created",
+                            "objectValidationState": "Unknown",
+                            "definitionID": "47175e6d-3995-4f65-9f10-ace37e0c5cc5",
+                            "valueDefinitionID": "47175e6d-3995-4f65-9f10-ace37e0c5cc5",
+                            "definitionKey": "ModifiedDate",
+                            "valueDefinitionKey": "ModifiedDate",
+                            "definitionName": "ModifiedDate",
+                            "name": "ModifiedDate",
+                            "valueID": "ba3af2ac-1654-4f92-98a1-b58aec57a300",
+                            "innerValue": "4/14/2026 1:54:15 PM"
+                        },
+                        {
+                            "objectState": "Created",
+                            "objectValidationState": "Unknown",
+                            "definitionID": "362d0134-2410-4ef2-b78f-e6b07c873952",
+                            "valueDefinitionID": "362d0134-2410-4ef2-b78f-e6b07c873952",
+                            "definitionKey": "UTCOffset",
+                            "valueDefinitionKey": "UTCOffset",
+                            "definitionName": "UTCOffset",
+                            "name": "UTCOffset",
+                            "valueID": "9cf5cab9-f48a-4dd3-af10-cbcbee0579ed",
+                            "innerValue": "0"
+                        },
+                        {
+                            "objectState": "Created",
+                            "objectValidationState": "Unknown",
+                            "definitionID": "1dcdd808-f073-4af4-bdf8-4414cc1deb97",
+                            "valueDefinitionID": "1dcdd808-f073-4af4-bdf8-4414cc1deb97",
+                            "definitionKey": "IsHonorDST",
+                            "valueDefinitionKey": "IsHonorDST",
+                            "definitionName": "IsHonorDST",
+                            "name": "IsHonorDST",
+                            "valueID": "90e11a78-6b89-4018-85a1-9ab9d9892fc5",
+                            "innerValue": "false"
+                        },
+                        {
+                            "objectState": "Created",
+                            "objectValidationState": "Unknown",
+                            "definitionID": "bb6c5c55-6f72-4900-a654-2e160577e8b3",
+                            "valueDefinitionID": "bb6c5c55-6f72-4900-a654-2e160577e8b3",
+                            "definitionKey": "MobileNumber",
+                            "valueDefinitionKey": "MobileNumber",
+                            "definitionName": "MobileNumber",
+                            "name": "MobileNumber",
+                            "valueID": "2372eb10-b9d8-4caf-8a60-879803fe91fc"
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "requestServiceMessageID": "62696698-0fe9-49e1-841c-c490a8e5869b",
+    "responseDateTime": "2026-04-14T07:54:15.0686099-06:00",
+    "resultMessages": [],
+    "serviceMessageID": "212544d5-13ff-447a-8c2e-ee83866a04ec"
+}
