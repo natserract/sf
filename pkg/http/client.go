@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
