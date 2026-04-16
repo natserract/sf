@@ -65,12 +65,22 @@ if __name__ == "__main__":
     csrf = credentials.get("csrf_token", "")
     cookie = credentials.get("cookie", "")
 
-    one_liner = (
+    one_liner_worker = (
         f"go run -race . worker"
         f" --bearer-token {bearer}"
         f" --csrf-token {csrf}"
         f" --cookie {cookie}"
     )
-
     print("\n📋 One-liner command:")
-    print(one_liner)
+    print(one_liner_worker)
+    print("\n")
+
+
+    one_liner_resume = (
+        f"go run -race . resume"
+        f" --bearer-token {bearer}"
+        f" --csrf-token {csrf}"
+        f" --cookie {cookie}"
+        f"--run-id "
+    )
+    print(one_liner_resume)

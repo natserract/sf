@@ -179,12 +179,31 @@ func (c *Client) FetchMessageHistoryConcurrent(
 			}
 			defer func() { <-sem }()
 
-			// Perform the actual API call
-			// Note: We use gctx so the request is aborted if the group fails elsewhere
-			history, _, err := c.FetchMessageHistory(gctx, auth, contact.ContactID)
-			if err != nil {
-				log.Printf("[HISTORY] Error fetching contactID=%s: %v", contact.ContactID, err)
-				return err
+			var history MessageHistoryResponse
+			var fetchErr error
+
+			// --- RETRY LOGIC ---
+			for i := 0; i < 3; i++ {
+				// Give each attempt its own 15-second deadline
+				reqCtx, cancel := context.WithTimeout(gctx, 30*time.Second)
+				history, _, fetchErr = c.FetchMessageHistory(reqCtx, auth, contact.ContactID)
+				cancel()
+
+				if fetchErr == nil {
+					break // Success!
+				}
+
+				// If it's a timeout, wait a moment and try again
+				if reqCtx.Err() == context.DeadlineExceeded {
+					time.Sleep(time.Duration(i+1) * 500 * time.Millisecond)
+					continue
+				}
+
+				return fetchErr // Permanent error (404, 401, etc.)
+			}
+
+			if fetchErr != nil {
+				return fmt.Errorf("failed after retries: %w", fetchErr)
 			}
 
 			// Safely append to the results slice
