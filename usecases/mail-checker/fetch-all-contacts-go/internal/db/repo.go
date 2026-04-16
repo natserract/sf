@@ -16,6 +16,7 @@ type Run struct {
 	CreatedAt      time.Time
 	State          string
 	StopPage       *int
+	LastExitPage   *int // persisted when the worker exits gracefully
 	CompletedAt    *time.Time
 	PageSize       int
 	StartedPage    int
@@ -58,13 +59,131 @@ returning id::text
 func (r *Repo) GetRun(ctx context.Context, runID string) (Run, error) {
 	var out Run
 	err := r.pool.QueryRow(ctx, `
-select id::text, created_at, state, stop_page, completed_at, page_size, started_page, base_url, filter_operator, filter_value
+select id::text, created_at, state, stop_page, last_exit_page, completed_at,
+       page_size, started_page, base_url, filter_operator, filter_value
 from runs where id = $1
-`, runID).Scan(&out.ID, &out.CreatedAt, &out.State, &out.StopPage, &out.CompletedAt, &out.PageSize, &out.StartedPage, &out.BaseURL, &out.FilterOperator, &out.FilterValue)
+`, runID).Scan(
+		&out.ID, &out.CreatedAt, &out.State,
+		&out.StopPage, &out.LastExitPage, &out.CompletedAt,
+		&out.PageSize, &out.StartedPage,
+		&out.BaseURL, &out.FilterOperator, &out.FilterValue,
+	)
 	if err != nil {
 		return Run{}, err
 	}
 	return out, nil
+}
+
+func (r *Repo) UpdateContactHasEngagementHistory(ctx context.Context, tx Tx, contactID string, hasEngagementHistory bool) error {
+	_, err := tx.Exec(ctx, `
+update contact_keys set has_engagement_history = $2 where contact_id = $1
+`, contactID, hasEngagementHistory)
+	return err
+}
+
+func (r *Repo) BatchUpdateContactHasEngagementHistory(ctx context.Context, tx Tx, contacts []api.ContactInfo, hasEngagementHistory bool) error {
+	var contactIDs []string
+	for _, contact := range contacts {
+		contactIDs = append(contactIDs, contact.ContactID)
+	}
+	_, err := tx.Exec(ctx, `
+update contact_keys set has_engagement_history = $1 where contact_id = any($2)
+`, hasEngagementHistory, contactIDs)
+	return err
+}
+
+// LastTouchedPage returns the highest page_number that has been started
+// (in_progress, done, empty, or failed) in this run. It is used to persist
+// last_exit_page on graceful shutdown so resume knows where to continue.
+func (r *Repo) LastTouchedPage(ctx context.Context, runID string) (int, error) {
+	var page int
+	err := r.pool.QueryRow(ctx, `
+select coalesce(max(page_number), 0)
+from pages
+where run_id = $1
+  and status in ('in_progress', 'done', 'empty', 'failed')
+`, runID).Scan(&page)
+	return page, err
+}
+
+// SetLastExitPage records the last page the worker reached before exiting.
+func (r *Repo) SetLastExitPage(ctx context.Context, runID string, page int) error {
+	_, err := r.pool.Exec(ctx, `
+update runs set last_exit_page = $2 where id = $1
+`, runID, page)
+	return err
+}
+
+// ResumeFromPage resets progress from resumePage onward so those pages are
+// re-fetched. It:
+//  1. Deletes contact_keys first seen on pages >= resumePage (partial writes).
+//  2. Resets those pages status back to 'pending'.
+//
+// Returns (contactKeysDropped, pagesReset, error).
+func (r *Repo) ResumeFromPage(ctx context.Context, runID string, resumePage int) (int64, int64, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Drop contact_keys that were inserted at or after the resume page.
+	ct, err := tx.Exec(ctx, `
+delete from contact_keys
+where first_seen_run_id = $1
+  and first_seen_page >= $2
+`, runID, resumePage)
+	if err != nil {
+		return 0, 0, fmt.Errorf("drop contact_keys: %w", err)
+	}
+	dropped := ct.RowsAffected()
+
+	// Reset pages at or after resume page back to pending.
+	ct, err = tx.Exec(ctx, `
+update pages
+set status        = 'pending',
+    attempts      = 0,
+    last_error    = null,
+    started_at    = null,
+    finished_at   = null,
+    locked_by     = null,
+    locked_at     = null,
+    next_attempt_at = now(),
+    updated_at    = now()
+where run_id = $1
+  and page_number >= $2
+`, runID, resumePage)
+	if err != nil {
+		return 0, 0, fmt.Errorf("reset pages: %w", err)
+	}
+	reset := ct.RowsAffected()
+
+	// Clear stop_page if it falls within the reset range so the run does not
+	// terminate prematurely on an old boundary.
+	if _, err = tx.Exec(ctx, `
+update runs
+set stop_page = null,
+    last_exit_page = null
+where id = $1
+  and (stop_page is null or stop_page >= $2)
+`, runID, resumePage); err != nil {
+		return 0, 0, fmt.Errorf("clear stop_page: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, err
+	}
+	return dropped, reset, nil
+}
+
+// ReopenRun sets a completed/failed run back to 'running' so workers can claim pages.
+func (r *Repo) ReopenRun(ctx context.Context, runID string) error {
+	_, err := r.pool.Exec(ctx, `
+update runs
+set state = 'running', completed_at = null
+where id = $1
+`, runID)
+	return err
 }
 
 func (r *Repo) EnsurePagePending(ctx context.Context, tx Tx, runID string, page int) error {
@@ -221,8 +340,25 @@ returning p.run_id::text, p.page_number, p.attempts
 	return &c, nil
 }
 
+// ReapStaleInProgress resets in-progress pages that have been locked for
+// longer than olderThan back to pending.  Pass olderThan=0 to reap all
+// in-progress pages unconditionally (useful on clean shutdown).
 func (r *Repo) ReapStaleInProgress(ctx context.Context, runID string, olderThan time.Duration) (int64, error) {
-	ct, err := r.pool.Exec(ctx, `
+	var ct pgconn.CommandTag
+	var err error
+	if olderThan == 0 {
+		ct, err = r.pool.Exec(ctx, `
+update pages
+set status='pending',
+    locked_by=null,
+    locked_at=null,
+    next_attempt_at=now(),
+    updated_at=now()
+where run_id = $1
+  and status='in_progress'
+`, runID)
+	} else {
+		ct, err = r.pool.Exec(ctx, `
 update pages
 set status='pending',
     locked_by=null,
@@ -233,6 +369,7 @@ where run_id = $1
   and status='in_progress'
   and locked_at < now() - ($2::interval)
 `, runID, fmt.Sprintf("%f seconds", olderThan.Seconds()))
+	}
 	if err != nil {
 		return 0, err
 	}

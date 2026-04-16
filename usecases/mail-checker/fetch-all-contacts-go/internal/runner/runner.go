@@ -21,6 +21,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// Fetch engagement history for all contacts concurrently, then batch-update.
+const maxEngagementWorkers = 2
+
 type Options struct {
 	MaxInFlight    int
 	MaxAttempts    int
@@ -44,6 +47,11 @@ type Processor struct {
 	Options  Options
 	Stdin    io.Reader
 	Stdout   io.Writer
+}
+
+type engagementResult struct {
+	contactID  string
+	hasHistory bool
 }
 
 func (p *Processor) Validate() error {
@@ -172,9 +180,11 @@ func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int,
 	resp, httpResp, err := p.API.FetchPage(ctx, usedAuth, params)
 	if err != nil {
 		if httpResp != nil && httpResp.StatusCode == http.StatusForbidden {
+			log.Printf("[PROCESS] page=%d got 403, attempting re-auth runID=%s", pageNumber, run.ID)
 			if reauthErr := p.reauthenticate(ctx, usedAuth); reauthErr != nil {
 				return p.handleProcessError(ctx, run.ID, pageNumber, attempts, httpResp, reauthErr)
 			}
+			log.Printf("[PROCESS] page=%d re-auth succeeded, retrying fetch runID=%s", pageNumber, run.ID)
 			resp, httpResp, err = p.API.FetchPage(ctx, p.AuthMgr.GetAuth(), params)
 		}
 	}
@@ -183,6 +193,12 @@ func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int,
 	}
 
 	contacts, empty := api.ExtractContactInfo(resp)
+	// Fetch engagement history for all contacts concurrently, then batch-update.
+	withHistory, withoutHistory, err := p.API.FetchMessageHistoryConcurrent(ctx, usedAuth, contacts, run.ID, maxEngagementWorkers)
+	if err != nil {
+		return err
+	}
+
 	tx, err := p.DB.Begin(ctx)
 	if err != nil {
 		return err
@@ -190,7 +206,24 @@ func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int,
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := p.Repo.InsertContactKeys(ctx, tx, run.ID, pageNumber, contacts); err != nil {
+		log.Printf("[PROCESS] page=%d InsertContactKeys error runID=%s err=%v", pageNumber, run.ID, err)
 		return err
+	}
+
+	// Batch update those WITH history (True)
+	if len(withHistory) > 0 {
+		log.Printf("[PROCESS] Updating %d contacts as HAS history", len(withHistory))
+		if err := p.Repo.BatchUpdateContactHasEngagementHistory(ctx, tx, contacts, true); err != nil {
+			return err
+		}
+	}
+
+	// Batch update those WITHOUT history (False)
+	if len(withoutHistory) > 0 {
+		log.Printf("[PROCESS] Updating %d contacts as NO history", len(withoutHistory))
+		if err := p.Repo.BatchUpdateContactHasEngagementHistory(ctx, tx, contacts, false); err != nil {
+			return err
+		}
 	}
 
 	status := "done"

@@ -25,3 +25,12 @@ type ContactInfo struct {
 	ContactKey string
 	ContactID  string
 }
+
+type MessageHistoryResponse struct {
+	DataSources             []any  `json:"dataSources"`
+	Messages                []any  `json:"messages"`
+	RequestServiceMessageID string `json:"requestServiceMessageID"`
+	ResponseDateTime        string `json:"responseDateTime"`
+	ResultMessages          []any  `json:"resultMessages"`
+	ServiceMessageID        string `json:"serviceMessageID"`
+}

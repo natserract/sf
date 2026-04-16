@@ -33,6 +33,7 @@ create table if not exists contact_keys (
   first_seen_run_id uuid not null references runs(id) on delete restrict,
   first_seen_page int not null,
   data jsonb null,
+  has_engagement_history boolean default false,
   inserted_at timestamptz not null default now()
 );
 

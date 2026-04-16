@@ -66,7 +66,7 @@ if __name__ == "__main__":
     cookie = credentials.get("cookie", "")
 
     one_liner = (
-        f"uv run main.py run"
+        f"go run -race . worker"
         f" --bearer-token {bearer}"
         f" --csrf-token {csrf}"
         f" --cookie {cookie}"

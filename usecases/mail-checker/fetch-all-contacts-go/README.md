@@ -91,6 +91,13 @@ Workers coordinate through Postgres row locking and will not process the same pa
 go run . status --run-id <RUN_ID>
 ```
 
+### Resume
+
+```bash
+go run . resume --run-id <uuid> \
+             --bearer-token … --csrf-token … --cookie
+```
+
 ## Resume After Crash / CTRL+C
 
 - Stop workers at any time.

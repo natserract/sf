@@ -6,11 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 type Client struct {
@@ -106,6 +110,106 @@ func (c *Client) FetchCount(ctx context.Context, auth Auth, p FetchCountParams) 
 		return CountResponse{}, resp, fmt.Errorf("unmarshal count response: %w", err)
 	}
 	return out, resp, nil
+}
+
+func (c *Client) FetchMessageHistory(ctx context.Context, auth Auth, contactID string) (MessageHistoryResponse, *http.Response, error) {
+	u := fmt.Sprintf("%s/contactsmeta/fuelapi/contacts-internal/v1/contact/%s/feeds/messageHistory?includeSchema=false", c.baseURL, contactID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return MessageHistoryResponse{}, nil, err
+	}
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("X-CSRF-Token", auth.CsrfToken)
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(strings.TrimPrefix(auth.BearerToken, "Bearer ")))
+	req.Header.Set("Cookie", strings.TrimSpace(strings.TrimPrefix(auth.Cookie, "Cookie:")))
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return MessageHistoryResponse{}, nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return MessageHistoryResponse{}, nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return MessageHistoryResponse{}, nil, fmt.Errorf("history api http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out MessageHistoryResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		return MessageHistoryResponse{}, resp, fmt.Errorf("unmarshal message history response: %w", err)
+	}
+	return out, resp, nil
+}
+
+func (c *Client) FetchMessageHistoryConcurrent(
+	ctx context.Context,
+	auth Auth,
+	contacts []ContactInfo,
+	runID string,
+	maxWorkers int,
+) (withHistory []string, withoutHistory []string, err error) {
+	if len(contacts) == 0 {
+		return nil, nil, nil
+	}
+
+	fetchStart := time.Now()
+	log.Printf("[HISTORY] Starting concurrent fetch: count=%d workers=%d runID=%s",
+		len(contacts), maxWorkers, runID)
+
+	// Create an errgroup. WithContext ensures that if one request fails,
+	// the context is cancelled for all other active requests.
+	g, gctx := errgroup.WithContext(ctx)
+
+	// Semaphore to cap concurrent API calls to prevent overwhelming the server
+	sem := make(chan struct{}, maxWorkers)
+
+	var mu sync.Mutex
+
+	for _, contact := range contacts {
+		contact := contact // capture loop variable for the closure
+
+		g.Go(func() error {
+			// Acquire semaphore slot
+			select {
+			case sem <- struct{}{}:
+			case <-gctx.Done():
+				return gctx.Err()
+			}
+			defer func() { <-sem }()
+
+			// Perform the actual API call
+			// Note: We use gctx so the request is aborted if the group fails elsewhere
+			history, _, err := c.FetchMessageHistory(gctx, auth, contact.ContactID)
+			if err != nil {
+				log.Printf("[HISTORY] Error fetching contactID=%s: %v", contact.ContactID, err)
+				return err
+			}
+
+			// Safely append to the results slice
+			mu.Lock()
+			// Logic: true if has len DataSources > 0, otherwise false
+			if len(history.DataSources) > 0 {
+				withHistory = append(withHistory, contact.ContactID)
+			} else {
+				withoutHistory = append(withoutHistory, contact.ContactID)
+			}
+			mu.Unlock()
+
+			return nil
+		})
+	}
+
+	// Wait for all goroutines to finish or return the first error encountered
+	if err := g.Wait(); err != nil {
+		return nil, nil, fmt.Errorf("concurrent fetch failed: %w", err)
+	}
+
+	log.Printf("[HISTORY] Completed fetch: withHistory=%d withoutHistory=%d elapsed=%s runID=%s",
+		len(withHistory), len(withoutHistory), time.Since(fetchStart), runID)
+
+	return withHistory, withoutHistory, nil
 }
 
 func (c *Client) buildRequestURLAndBody(path string, pageSize, page int, orderBy string, body any) (*url.URL, []byte, error) {
