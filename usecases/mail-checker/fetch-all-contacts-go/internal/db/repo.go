@@ -625,3 +625,37 @@ where first_seen_run_id = $1
 `, runID).Scan(&total)
 	return total, err
 }
+
+// GetContactsForHistory fetches a batch of contacts where history hasn't been checked yet.
+func (r *Repo) GetContactsForHistory(ctx context.Context, limit int) ([]api.ContactInfo, error) {
+	query := `
+        SELECT contact_id 
+        FROM contact_keys 
+        WHERE has_engagement_history = false 
+        LIMIT $1`
+
+	rows, err := r.pool.Query(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var contacts []api.ContactInfo
+	for rows.Next() {
+		var c api.ContactInfo
+		if err := rows.Scan(&c.ContactID); err != nil {
+			return nil, err
+		}
+		contacts = append(contacts, c)
+	}
+	return contacts, nil
+}
+
+// UpdateHistoryStatus marks contacts as processed.
+func (r *Repo) UpdateHistoryStatus(ctx context.Context, contactIDs []string) error {
+	if len(contactIDs) == 0 {
+		return nil
+	}
+	_, err := r.pool.Exec(ctx, "UPDATE contact_keys SET has_engagement_history = true WHERE contact_id = ANY($1)", contactIDs)
+	return err
+}

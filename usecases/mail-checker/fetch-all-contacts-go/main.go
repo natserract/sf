@@ -42,14 +42,14 @@ func main() {
 		auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
 		return cfg, auth, nil
 	}))
-	root.AddCommand(newWorkerCmd(func() (config.Config, api.Auth, error) {
-		cfg, err := config.FromEnvFull()
-		if err != nil {
-			return config.Config{}, api.Auth{}, err
-		}
-		auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
-		return cfg, auth, nil
-	}))
+	// root.AddCommand(newWorkerCmd(func() (config.Config, api.Auth, error) {
+	// 	cfg, err := config.FromEnvFull()
+	// 	if err != nil {
+	// 		return config.Config{}, api.Auth{}, err
+	// 	}
+	// 	auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
+	// 	return cfg, auth, nil
+	// }))
 	root.AddCommand(newStatusCmd(func() (config.Config, error) {
 		cfg, err := config.FromEnvFull()
 		if err != nil {
@@ -67,6 +67,14 @@ func main() {
 		return auth, cfg, client, nil
 	}))
 	root.AddCommand(newResumeCmd(func() (config.Config, api.Auth, error) {
+		cfg, err := config.FromEnvFull()
+		if err != nil {
+			return config.Config{}, api.Auth{}, err
+		}
+		auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
+		return cfg, auth, nil
+	}))
+	root.AddCommand(newFetchHistoryCmd(func() (config.Config, api.Auth, error) {
 		cfg, err := config.FromEnvFull()
 		if err != nil {
 			return config.Config{}, api.Auth{}, err
@@ -556,4 +564,35 @@ func newStatusCmd(build func() (config.Config, error)) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&runID, "run-id", "", "Run ID (uuid)")
 	return cmd
+}
+
+func newFetchHistoryCmd(build func() (config.Config, api.Auth, error)) *cobra.Command {
+	return &cobra.Command{
+		Use:   "fetch-history",
+		Short: "Background job to fetch message history for existing contacts",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, auth, err := build()
+			if err != nil {
+				return err
+			}
+
+			pool, _ := db.Open(cmd.Context(), cfg.DBDSN)
+			repo := db.NewRepo(pool)
+			client := api.NewClient(cfg.APIBaseURL)
+
+			// Initialize AuthManager with stdin/stdout for interactive prompts
+			authMgr := runner.NewAuthManager(auth, os.Stdin, os.Stdout, 5)
+
+			processor := &runner.HistoryProcessor{
+				Repo:       repo,
+				API:        client,
+				AuthMgr:    authMgr,
+				MaxWorkers: 10,  // Or from config
+				BatchSize:  100, // Or from config
+			}
+
+			log.Println("Starting history fetcher...")
+			return processor.Run(cmd.Context())
+		},
+	}
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -148,31 +147,21 @@ func (c *Client) FetchMessageHistoryConcurrent(
 	ctx context.Context,
 	auth Auth,
 	contacts []ContactInfo,
-	runID string,
 	maxWorkers int,
-) (withHistory []string, withoutHistory []string, err error) {
+) ([]string, *http.Response, error) {
 	if len(contacts) == 0 {
 		return nil, nil, nil
 	}
 
-	fetchStart := time.Now()
-	log.Printf("[HISTORY] Starting concurrent fetch: count=%d workers=%d runID=%s",
-		len(contacts), maxWorkers, runID)
-
-	// Create an errgroup. WithContext ensures that if one request fails,
-	// the context is cancelled for all other active requests.
 	g, gctx := errgroup.WithContext(ctx)
-
-	// Semaphore to cap concurrent API calls to prevent overwhelming the server
 	sem := make(chan struct{}, maxWorkers)
-
 	var mu sync.Mutex
+	var withHistory []string
+	var resp *http.Response
 
 	for _, contact := range contacts {
-		contact := contact // capture loop variable for the closure
-
+		contact := contact
 		g.Go(func() error {
-			// Acquire semaphore slot
 			select {
 			case sem <- struct{}{}:
 			case <-gctx.Done():
@@ -180,61 +169,28 @@ func (c *Client) FetchMessageHistoryConcurrent(
 			}
 			defer func() { <-sem }()
 
-			var history MessageHistoryResponse
-			var fetchErr error
-
-			// --- RETRY LOGIC ---
-			for i := 0; i < 3; i++ {
-				// Give each attempt its own 15-second deadline
-				reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				history, _, fetchErr = c.FetchMessageHistory(reqCtx, auth, contact.ContactID)
-				cancel()
-
-				if fetchErr == nil {
-					break // Success!
-				}
-
-				if gctx.Err() != nil {
-					return gctx.Err()
-				}
-
-				// If it's a timeout, wait a moment and try again
-				if gctx.Err() == context.DeadlineExceeded {
-					log.Printf("[HISTORY] attempt %d timeout contactID=%s, retrying", i+1, contact.ContactID)
-					time.Sleep(time.Duration(i+1) * 500 * time.Millisecond)
-					continue
-				}
-
-				return fetchErr // Permanent error (404, 401, etc.)
+			// No retry loop here anymore; we handle it in the Processor
+			history, response, err := c.FetchMessageHistory(gctx, auth, contact.ContactID)
+			if IsAuthError(response) {
+				resp = response
+			}
+			if err != nil {
+				return err // Return raw error (including 401/403)
 			}
 
-			if fetchErr != nil {
-				return fmt.Errorf("failed after retries: %w", fetchErr)
-			}
-
-			// Safely append to the results slice
-			mu.Lock()
-			// Logic: true if has len DataSources > 0, otherwise false
 			if len(history.DataSources) > 0 {
+				mu.Lock()
 				withHistory = append(withHistory, contact.ContactID)
-			} else {
-				withoutHistory = append(withoutHistory, contact.ContactID)
+				mu.Unlock()
 			}
-			mu.Unlock()
-
 			return nil
 		})
 	}
 
-	// Wait for all goroutines to finish or return the first error encountered
 	if err := g.Wait(); err != nil {
-		return nil, nil, fmt.Errorf("concurrent fetch failed: %w", err)
+		return nil, nil, err
 	}
-
-	log.Printf("[HISTORY] Completed fetch: withHistory=%d withoutHistory=%d elapsed=%s runID=%s",
-		len(withHistory), len(withoutHistory), time.Since(fetchStart), runID)
-
-	return withHistory, withoutHistory, nil
+	return withHistory, resp, nil
 }
 
 func (c *Client) buildRequestURLAndBody(path string, pageSize, page int, orderBy string, body any) (*url.URL, []byte, error) {

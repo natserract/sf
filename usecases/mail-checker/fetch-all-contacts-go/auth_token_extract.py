@@ -84,3 +84,12 @@ if __name__ == "__main__":
         f" --run-id "
     )
     print(one_liner_resume)
+    print("\n")
+
+    one_liner_history = (
+        f"go run -race . fetch-history"
+        f" --bearer-token {bearer}"
+        f" --csrf-token {csrf}"
+        f" --cookie '{cookie}'"
+    )
+    print(one_liner_history)

@@ -34,3 +34,7 @@ type MessageHistoryResponse struct {
 	ResultMessages          []any  `json:"resultMessages"`
 	ServiceMessageID        string `json:"serviceMessageID"`
 }
+
+type ContactHistory struct {
+	ContactID string
+}
