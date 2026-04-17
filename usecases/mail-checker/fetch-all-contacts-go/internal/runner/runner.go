@@ -48,13 +48,11 @@ type Processor struct {
 	Options  Options
 	Stdin    io.Reader
 	Stdout   io.Writer
-	jobCh    chan engagementJob // set by Run()
 }
 
 type engagementJob struct {
 	contact  api.ContactInfo
 	runID    string
-	pageKey  string // opaque key so the collector knows which page
 	resultCh chan<- engagementResult
 }
 
@@ -113,6 +111,20 @@ func (p *Processor) Validate() error {
 	return nil
 }
 
+// Run is the main entry point. It:
+//  1. Claims a batch of up to MaxInFlight pending pages.
+//  2. Processes all pages in the batch concurrently (errgroup), waiting until
+//     every page in the batch is fully done before claiming the next batch.
+//  3. Idles (IdleSleep) when no pages are available but the run is not yet
+//     complete — this handles the case where all remaining pages are temporarily
+//     in_progress by another worker or waiting on next_attempt_at.
+//  4. Runs a reaper goroutine in parallel that reclaims stale in_progress pages.
+//
+// Batch flow:
+//
+//	Batch 1 → Process page 1 + page 2 (concurrent) → WAIT both done
+//	Batch 2 → Process page 3 + page 4 (concurrent) → WAIT both done
+//	…
 func (p *Processor) Run(ctx context.Context, runID string) error {
 	if err := p.Validate(); err != nil {
 		return err
@@ -123,23 +135,80 @@ func (p *Processor) Run(ctx context.Context, runID string) error {
 		return err
 	}
 
-	// Shared job queue. Buffer = engagementWorkers × 4 gives backpressure
-	// without blocking page workers unnecessarily.
-	// jobCh := make(chan engagementJob, maxEngagementWorkers*4)
-
+	// Top-level errgroup: one goroutine drives the batch loop, another runs the
+	// reaper. Both share the same derived context so either can stop the other.
 	g, gctx := errgroup.WithContext(ctx)
 
-	for i := 0; i < p.Options.MaxInFlight; i++ {
-		g.Go(func() error {
-			return p.workerLoop(gctx, run)
-		})
-	}
+	// Batch-processing loop.
+	g.Go(func() error {
+		for {
+			// Respect cancellation before each claim attempt.
+			if err := gctx.Err(); err != nil {
+				return nil // parent cancelled — clean exit
+			}
 
-	// Shared engagement pool — drains jobCh until it's closed.
-	// g.Go(func() error {
-	// 	return p.engagementPool(gctx, jobCh)
-	// })
+			pages, err := p.Repo.ClaimNextPages(
+				gctx,
+				runID,
+				p.WorkerID,
+				p.Options.MaxAttempts,
+				p.Options.MaxInFlight,
+			)
+			if err != nil {
+				return err
+			}
 
+			if len(pages) == 0 {
+				// No pending pages available right now.
+				// Check whether the run is fully complete (no pending or in_progress).
+				done, doneErr := p.Repo.MarkRunCompletedIfDrained(gctx, runID)
+				if doneErr != nil {
+					return doneErr
+				}
+				if done {
+					log.Printf("[RUN] run_id=%s all pages drained — run completed", runID)
+					return nil
+				}
+
+				// Pages may still be in_progress by us or another worker,
+				// or waiting on next_attempt_at. Idle and retry.
+				log.Printf("[RUN] run_id=%s no claimable pages, idling %s", runID, p.Options.IdleSleep)
+				select {
+				case <-gctx.Done():
+					return nil
+				case <-time.After(p.Options.IdleSleep):
+					continue
+				}
+			}
+
+			pageNums := make([]int, len(pages))
+			for i, pg := range pages {
+				pageNums[i] = pg.PageNumber
+			}
+			log.Printf("[RUN] batch_start pages=%v", pageNums)
+
+			// Process every page in this batch concurrently.
+			// We use a fresh errgroup so a single page error stops the batch
+			// but does NOT cancel the reaper goroutine above.
+			batchG, batchCtx := errgroup.WithContext(gctx)
+			for _, page := range pages {
+				pg := page // capture
+				batchG.Go(func() error {
+					return p.processPage(batchCtx, run, pg.PageNumber, pg.Attempts, pg.BatchID)
+				})
+			}
+
+			// WAIT: entire batch must finish before claiming the next one.
+			if err := batchG.Wait(); err != nil {
+				return err
+			}
+
+			log.Printf("[RUN] batch_done pages=%v", pageNums)
+		}
+	})
+
+	// Reaper goroutine: periodically resets stale in_progress pages → pending
+	// so they can be re-claimed (handles crashed workers, etc.).
 	g.Go(func() error {
 		t := time.NewTicker(p.Options.ReapInterval)
 		defer t.Stop()
@@ -148,48 +217,26 @@ func (p *Processor) Run(ctx context.Context, runID string) error {
 			case <-gctx.Done():
 				return nil
 			case <-t.C:
-				if _, err := p.Repo.ReapStaleInProgress(gctx, runID, p.Options.LockTimeout); err != nil {
-					return err
+				reaped, err := p.Repo.ReapStaleInProgress(gctx, runID, p.Options.LockTimeout)
+				if err != nil {
+					// Non-fatal: log and continue — a single reap failure should
+					// not abort the entire run.
+					log.Printf("[REAP] error: %v", err)
+					continue
+				}
+				if reaped > 0 {
+					log.Printf("[REAP] reset %d stale in_progress page(s) → pending", reaped)
 				}
 			}
 		}
 	})
+
 	return g.Wait()
 }
 
-func (p *Processor) workerLoop(ctx context.Context, run db.Run) error {
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil
-		}
-		claimed, err := p.Repo.ClaimNextPage(ctx, run.ID, p.WorkerID, p.Options.MaxAttempts)
-		if err != nil {
-			return err
-		}
-		if claimed == nil {
-			done, err := p.Repo.MarkRunCompletedIfDrained(ctx, run.ID)
-			if err != nil {
-				return err
-			}
-			if done {
-				return nil
-			}
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-time.After(p.Options.IdleSleep):
-				continue
-			}
-		}
-		if err := p.processPage(ctx, run, claimed.PageNumber, claimed.Attempts); err != nil {
-			return err
-		}
-	}
-}
-
-// Runs engagementWorkers goroutines, each pulling from jobCh.
-// Uses its own independent context so a single fetch failure doesn't
-// nuke unrelated page workers.
+// engagementPool runs up to maxEngagementWorkers goroutines, each pulling from
+// jobCh. Uses its own independent context so a single fetch failure does not
+// cancel unrelated page workers.
 func (p *Processor) engagementPool(ctx context.Context, jobCh <-chan engagementJob) error {
 	g, gctx := errgroup.WithContext(ctx)
 	sem := make(chan struct{}, maxEngagementWorkers)
@@ -215,14 +262,12 @@ func (p *Processor) engagementPool(ctx context.Context, jobCh <-chan engagementJ
 			var fetchErr error
 
 			for attempt := 0; attempt < maxAttempts; attempt++ {
-				// Exponential timeout per attempt: 60s, 90s, 135s, 180s (capped)
-				// This handles "big history = slow response" without giving up early.
+				// Exponential timeout per attempt: 60s, 90s, 135s, 180s (capped).
 				timeout := time.Duration(float64(baseTimeout) * math.Pow(1.5, float64(attempt)))
 				if timeout > maxTimeout {
 					timeout = maxTimeout
 				}
 
-				// Own timeout, fully isolated from page ctx.
 				reqCtx, cancel := context.WithTimeout(ctx, timeout)
 				history, _, fetchErr = p.API.FetchMessageHistory(reqCtx, p.AuthMgr.GetAuth(), job.contact.ContactID)
 				cancel()
@@ -230,7 +275,7 @@ func (p *Processor) engagementPool(ctx context.Context, jobCh <-chan engagementJ
 				if fetchErr == nil {
 					break
 				}
-				// Distinguish retryable from permanent.
+
 				isTimeout := errors.Is(fetchErr, context.DeadlineExceeded) || reqCtx.Err() == context.DeadlineExceeded
 				isNetErr := func() bool {
 					var ne net.Error
@@ -238,7 +283,7 @@ func (p *Processor) engagementPool(ctx context.Context, jobCh <-chan engagementJ
 				}()
 
 				if !isTimeout && !isNetErr {
-					// Permanent: 401, 403, 404, JSON parse error — don't retry.
+					// Permanent error (401, 403, 404, JSON parse) — don't retry.
 					log.Printf("[ENGAGEMENT] permanent error contactID=%s attempt=%d err=%v",
 						job.contact.ContactID, attempt+1, fetchErr)
 					break
@@ -270,9 +315,7 @@ func (p *Processor) engagementPool(ctx context.Context, jobCh <-chan engagementJ
 	return g.Wait()
 }
 
-func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int, attempts int) error {
-	fmt.Fprintf(p.Stdout, "[PROCESS] page=%d start\n", pageNumber)
-
+func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int, attempts int, batchID int64) error {
 	params := api.FetchPageParams{
 		PageSize:                run.PageSize,
 		Page:                    pageNumber,
@@ -298,75 +341,16 @@ func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int,
 
 	contacts, empty := api.ExtractContactInfo(resp)
 
-	// resultCh := make(chan engagementResult, len(contacts))
-	// for _, c := range contacts {
-	// 	p.jobCh <- engagementJob{ // jobCh stored on Processor (see below)
-	// 		contact:  c,
-	// 		runID:    run.ID,
-	// 		resultCh: resultCh,
-	// 	}
-	// }
-
-	// Collect exactly len(contacts) results. The pool handles retries;
-	// this page worker just waits for its batch — but crucially, the
-	// pool's goroutines are shared across ALL pages so other pages make
-	// progress concurrently while we wait.
-	// var withHistory, withoutHistory []string
-	// for i := 0; i < len(contacts); i++ {
-	// 	select {
-	// 	case <-ctx.Done():
-	// 		return ctx.Err()
-	// 	case r := <-resultCh:
-	// 		if r.err != nil {
-	// 			isTimeout := errors.Is(r.err, context.DeadlineExceeded)
-
-	// 			if isTimeout {
-	// 				// History API timed out even after retries — treat as unknown,
-	// 				// not as "no history". You can add a third bucket for this if needed.
-	// 				log.Printf("[PROCESS] page=%d contactID=%s history timeout after retries, skipping",
-	// 					pageNumber, r.contactID)
-	// 			} else {
-	// 				log.Printf("[PROCESS] page=%d contactID=%s history fetch error: %v",
-	// 					pageNumber, r.contactID, r.err)
-	// 			}
-	// 			// Don't append to withoutHistory — don't write a false negative.
-	// 			// Either skip entirely or add a "unknown" update if your schema supports it.
-	// 			continue
-	// 		}
-	// 		if r.hasHistory {
-	// 			withHistory = append(withHistory, r.contactID)
-	// 		} else {
-	// 			withoutHistory = append(withoutHistory, r.contactID)
-	// 		}
-	// 	}
-	// }
-
 	tx, err := p.DB.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := p.Repo.InsertContactKeys(ctx, tx, run.ID, pageNumber, contacts); err != nil {
-		log.Printf("[PROCESS] page=%d InsertContactKeys error runID=%s err=%v", pageNumber, run.ID, err)
+	if _, err := p.Repo.InsertContactKeys(ctx, tx, run.ID, pageNumber, batchID, contacts); err != nil {
+		log.Printf("[PROCESS] page=%d batch=%d InsertContactKeys error runID=%s err=%v", pageNumber, batchID, run.ID, err)
 		return err
 	}
-
-	// Batch update those WITH history (True)
-	// if len(withHistory) > 0 {
-	// 	log.Printf("[PROCESS] Updating %d contacts as HAS history", len(withHistory))
-	// 	if err := p.Repo.BatchUpdateContactHasEngagementHistory(ctx, tx, withHistory, true); err != nil {
-	// 		return err
-	// 	}
-	// }
-
-	// // Batch update those WITHOUT history (False)
-	// if len(withoutHistory) > 0 {
-	// 	log.Printf("[PROCESS] Updating %d contacts as NO history", len(withoutHistory))
-	// 	if err := p.Repo.BatchUpdateContactHasEngagementHistory(ctx, tx, withoutHistory, false); err != nil {
-	// 		return err
-	// 	}
-	// }
 
 	status := "done"
 	if empty {
@@ -381,14 +365,15 @@ func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int,
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	fmt.Fprintf(p.Stdout, "[PROCESS] page=%d done\n", pageNumber)
+
+	fmt.Fprintf(p.Stdout, "[PROCESS] page=%d batch=%d done status=%s contacts=%d\n", pageNumber, batchID, status, len(contacts))
+
 	totalContacts, err := p.Repo.GetRunTotalContacts(ctx, run.ID)
 	if err != nil {
 		return err
 	}
 	logProgress(ctx, p.Repo, run.ID, totalContacts)
-	_, err = p.Repo.MarkRunCompletedIfDrained(ctx, run.ID)
-	return err
+	return nil
 }
 
 func (p *Processor) reauthenticate(ctx context.Context, failedAuth api.Auth) error {
@@ -431,6 +416,8 @@ func (p *Processor) handleProcessError(ctx context.Context, runID string, pageNu
 		return p.Repo.MarkPageRetry(ctx, tx, runID, pageNumber, errMsg, nextAttempt)
 	})
 }
+
+// ── helpers ──────────────────────────────────────────────────────────────────
 
 func withTx(ctx context.Context, pool *pgxpool.Pool, fn func(tx db.Tx) error) error {
 	tx, err := pool.Begin(ctx)
@@ -516,6 +503,8 @@ func isRetryableDB(err error) bool {
 	return false
 }
 
+// ── shutdown helper ───────────────────────────────────────────────────────────
+
 type Shutdown struct {
 	once sync.Once
 	done chan struct{}
@@ -532,6 +521,8 @@ func (s *Shutdown) Stop() {
 func (s *Shutdown) Done() <-chan struct{} {
 	return s.done
 }
+
+// ── logging ───────────────────────────────────────────────────────────────────
 
 func logProgress(ctx context.Context, repo *db.Repo, runID string, totalCount int) {
 	current, err := repo.CountContactKeys(ctx, runID)

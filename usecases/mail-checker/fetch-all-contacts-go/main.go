@@ -108,7 +108,6 @@ func newFetchOnceCmd(build func() (api.Auth, config.Config, *api.Client, error))
 				return err
 			}
 
-			// Flag overrides env/config defaults.
 			ps := cfg.PageSize
 			if pageSize > 0 {
 				ps = pageSize
@@ -274,8 +273,8 @@ func newWorkerCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 				return err
 			}
 
-			// Graceful shutdown: capture signal, let the processor drain,
-			// then persist the last-seen page and reap stale locks.
+			// Graceful shutdown: SIGINT/SIGTERM cancels the worker context.
+			// The processor's Run() will finish its current batch before returning.
 			workerCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
@@ -287,18 +286,18 @@ func newWorkerCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), cfg.LockTimeout)
 			defer cancel()
 
-			// 1. Record the last page that was touched during this session so
-			//    resume can continue from there.
-			if lastPage, perr := repo.LastTouchedPage(cleanupCtx, runID); perr == nil && lastPage > 0 {
-				if perr2 := repo.SetLastExitPage(cleanupCtx, runID, lastPage); perr2 != nil {
-					log.Printf("warn: set last_exit_page: %v", perr2)
+			// 1. Record the last batch_id that was touched during this session.
+			//    On resume, we rewind to this batch so partial writes are cleaned up.
+			if lastBatch, perr := repo.LastTouchedBatch(cleanupCtx, runID); perr == nil && lastBatch > 0 {
+				if perr2 := repo.SetLastExitBatch(cleanupCtx, runID, lastBatch); perr2 != nil {
+					log.Printf("warn: set last_exit_batch: %v", perr2)
 				} else {
-					log.Printf("persisted last_exit_page=%d for run_id=%s", lastPage, runID)
+					log.Printf("persisted last_exit_batch=%d for run_id=%s", lastBatch, runID)
 				}
 			}
 
-			// 2. Reap any pages that were left in-progress by this process so
-			//    they can be retried immediately on next start.
+			// 2. Reap any pages that were left in_progress by this process so
+			//    they can be retried immediately on the next start.
 			reaped, rerr := repo.ReapStaleInProgress(cleanupCtx, runID, 0)
 			if rerr != nil {
 				log.Printf("warn: reap stale pages on exit: %v", rerr)
@@ -315,16 +314,20 @@ func newWorkerCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 }
 
 // newResumeCmd resets a previously interrupted run back to a clean state so
-// workers can pick up exactly where they left off.  It:
+// workers can pick up exactly where they left off. It:
 //  1. Resets all in-progress pages → pending (handles crash leftovers).
-//  2. Drops contact_keys rows for pages >= last_exit_page (partial writes).
-//  3. Resets pages >= last_exit_page → pending so they are re-fetched.
+//  2. Drops contact_keys rows for batches >= last_exit_batch (partial writes).
+//  3. Resets pages in those batches → pending so they are re-fetched.
+//
+// Resume is now batch-aligned: the unit of rewind is always a full batch, not
+// an individual page. This means that if batch 7 contained pages 61–70 and the
+// worker was killed mid-batch, all of pages 61–70 are rewound together.
 func newResumeCmd(build func() (config.Config, api.Auth, error)) *cobra.Command {
 	var runID string
-	var fromPage int
+	var fromBatch int64
 	cmd := &cobra.Command{
 		Use:   "resume",
-		Short: "Resume an interrupted run from its last-exit page (resets partial progress)",
+		Short: "Resume an interrupted run from its last-exit batch (resets partial batch progress)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, auth, err := build()
 			if err != nil {
@@ -352,36 +355,46 @@ func newResumeCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 
 			repo := db.NewRepo(pool)
 
-			// Determine resume page: explicit flag beats persisted value.
-			resumePage := fromPage
-			if resumePage <= 0 {
+			// Determine resume batch: explicit flag beats persisted value.
+			resumeBatch := fromBatch
+			if resumeBatch <= 0 {
 				run, rerr := repo.GetRun(cmd.Context(), runID)
 				if rerr != nil {
 					return rerr
 				}
-				if run.LastExitPage != nil {
-					resumePage = *run.LastExitPage
+				if run.LastExitBatch != nil {
+					resumeBatch = *run.LastExitBatch
 				}
 			}
-			if resumePage <= 0 {
-				return fmt.Errorf("no last_exit_page found for run %s and --from-page not set", runID)
+			if resumeBatch <= 0 {
+				return fmt.Errorf("no last_exit_batch found for run %s and --from-batch not set", runID)
 			}
 
-			dropped, reset, rerr := repo.ResumeFromPage(cmd.Context(), runID, resumePage)
+			// 1. Reap stale in_progress pages first (crash leftovers from the
+			//    previous session that were never cleaned up).
+			reaped, rerr := repo.ReapStaleInProgress(cmd.Context(), runID, 0)
+			if rerr != nil {
+				log.Printf("warn: reap stale pages before resume: %v", rerr)
+			} else if reaped > 0 {
+				log.Printf("requeued %d stale in-progress page(s) back to pending before rewind", reaped)
+			}
+
+			// 2. Rewind: delete partial contact_keys and reset pages for this batch.
+			dropped, reset, rerr := repo.ResumeFromBatch(cmd.Context(), runID, resumeBatch)
 			if rerr != nil {
 				return rerr
 			}
 
-			// Re-open the run so workers can claim pages.
+			// 3. Re-open the run so workers can claim pages.
 			if rerr2 := repo.ReopenRun(cmd.Context(), runID); rerr2 != nil {
 				return rerr2
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(),
-				"run_id=%s resume_page=%d contact_keys_dropped=%d pages_reset=%d state=running\n",
-				runID, resumePage, dropped, reset)
+				"run_id=%s resume_batch=%d contact_keys_dropped=%d pages_reset=%d state=running\n",
+				runID, resumeBatch, dropped, reset)
 
-			// Kick off workers immediately in the same process.
+			// Kick off a worker immediately in the same process.
 			workerID := fmt.Sprintf("%d-%d", os.Getpid(), rand.Int())
 			apiClient := api.NewClient(cfg.APIBaseURL)
 			proc := &runner.Processor{
@@ -409,25 +422,25 @@ func newResumeCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 			workerCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			log.Printf("resume worker started run_id=%s worker_id=%s from_page=%d", runID, workerID, resumePage)
+			log.Printf("resume worker started run_id=%s worker_id=%s from_batch=%d", runID, workerID, resumeBatch)
 			runErr := proc.Run(workerCtx, runID)
 
 			// Same shutdown cleanup as the worker command.
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), cfg.LockTimeout)
 			defer cancel()
 
-			if lastPage, perr := repo.LastTouchedPage(cleanupCtx, runID); perr == nil && lastPage > 0 {
-				if perr2 := repo.SetLastExitPage(cleanupCtx, runID, lastPage); perr2 != nil {
-					log.Printf("warn: set last_exit_page: %v", perr2)
+			if lastBatch, perr := repo.LastTouchedBatch(cleanupCtx, runID); perr == nil && lastBatch > 0 {
+				if perr2 := repo.SetLastExitBatch(cleanupCtx, runID, lastBatch); perr2 != nil {
+					log.Printf("warn: set last_exit_batch: %v", perr2)
 				} else {
-					log.Printf("persisted last_exit_page=%d for run_id=%s", lastPage, runID)
+					log.Printf("persisted last_exit_batch=%d for run_id=%s", lastBatch, runID)
 				}
 			}
-			reaped, rerr2 := repo.ReapStaleInProgress(cleanupCtx, runID, 0)
+			reaped2, rerr2 := repo.ReapStaleInProgress(cleanupCtx, runID, 0)
 			if rerr2 != nil {
 				log.Printf("warn: reap on exit: %v", rerr2)
-			} else if reaped > 0 {
-				log.Printf("requeued %d in-progress page(s) back to pending", reaped)
+			} else if reaped2 > 0 {
+				log.Printf("requeued %d in-progress page(s) back to pending", reaped2)
 			}
 
 			log.Printf("resume worker exited run_id=%s worker_id=%s", runID, workerID)
@@ -435,7 +448,7 @@ func newResumeCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 		},
 	}
 	cmd.Flags().StringVar(&runID, "run-id", "", "Run ID (uuid) — required")
-	cmd.Flags().IntVar(&fromPage, "from-page", 0, "Override resume page (default: last_exit_page stored in DB)")
+	cmd.Flags().Int64Var(&fromBatch, "from-batch", 0, "Override resume batch ID (default: last_exit_batch stored in DB)")
 	return cmd
 }
 
@@ -527,14 +540,14 @@ func newStatusCmd(build func() (config.Config, error)) *cobra.Command {
 			if run.StopPage != nil {
 				stopPage = fmt.Sprintf("%d", *run.StopPage)
 			}
-			lastExitPage := "null"
-			if run.LastExitPage != nil {
-				lastExitPage = fmt.Sprintf("%d", *run.LastExitPage)
+			lastExitBatch := "null"
+			if run.LastExitBatch != nil {
+				lastExitBatch = fmt.Sprintf("%d", *run.LastExitBatch)
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(),
-				"run_id=%s state=%s stop_page=%s last_exit_page=%s page_size=%d base_url=%s filter=%s:%s\n",
-				run.ID, run.State, stopPage, lastExitPage, run.PageSize, run.BaseURL, run.FilterOperator, run.FilterValue)
+				"run_id=%s state=%s stop_page=%s last_exit_batch=%s page_size=%d base_url=%s filter=%s:%s\n",
+				run.ID, run.State, stopPage, lastExitBatch, run.PageSize, run.BaseURL, run.FilterOperator, run.FilterValue)
 			fmt.Fprintf(cmd.OutOrStdout(),
 				"pages_done=%d pages_failed=%d pages_empty=%d pages_in_progress=%d pages_pending=%d\n",
 				done, failed, empty, inProgress, pending)

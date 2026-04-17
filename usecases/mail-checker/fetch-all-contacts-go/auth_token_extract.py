@@ -80,7 +80,7 @@ if __name__ == "__main__":
         f"go run -race . resume"
         f" --bearer-token {bearer}"
         f" --csrf-token {csrf}"
-        f" --cookie {cookie}"
-        f"--run-id "
+        f" --cookie '{cookie}'"
+        f" --run-id "
     )
     print(one_liner_resume)

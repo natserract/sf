@@ -16,7 +16,7 @@ type Run struct {
 	CreatedAt      time.Time
 	State          string
 	StopPage       *int
-	LastExitPage   *int // persisted when the worker exits gracefully
+	LastExitBatch  *int64 // persisted on graceful shutdown — resume restarts from this batch
 	CompletedAt    *time.Time
 	PageSize       int
 	StartedPage    int
@@ -25,14 +25,24 @@ type Run struct {
 	FilterValue    string
 }
 
+// ClaimedPage is returned by ClaimNextPages. It now carries the batch_id that
+// was assigned to the whole batch at claim time so processPage can record it.
 type ClaimedPage struct {
 	RunID      string
 	PageNumber int
 	Attempts   int
+	BatchID    int64
 }
 
 type Repo struct {
 	pool *pgxpool.Pool
+}
+
+type Page struct {
+	RunID      string
+	PageNumber int
+	Attempts   int
+	BatchID    int64
 }
 
 func NewRepo(pool *pgxpool.Pool) *Repo {
@@ -59,12 +69,12 @@ returning id::text
 func (r *Repo) GetRun(ctx context.Context, runID string) (Run, error) {
 	var out Run
 	err := r.pool.QueryRow(ctx, `
-select id::text, created_at, state, stop_page, last_exit_page, completed_at,
+select id::text, created_at, state, stop_page, last_exit_batch, completed_at,
        page_size, started_page, base_url, filter_operator, filter_value
 from runs where id = $1
 `, runID).Scan(
 		&out.ID, &out.CreatedAt, &out.State,
-		&out.StopPage, &out.LastExitPage, &out.CompletedAt,
+		&out.StopPage, &out.LastExitBatch, &out.CompletedAt,
 		&out.PageSize, &out.StartedPage,
 		&out.BaseURL, &out.FilterOperator, &out.FilterValue,
 	)
@@ -88,82 +98,131 @@ update contact_keys set has_engagement_history = $1 where contact_id = any($2)
 	return err
 }
 
-// LastTouchedPage returns the highest page_number that has been started
-// (in_progress, done, empty, or failed) in this run. It is used to persist
-// last_exit_page on graceful shutdown so resume knows where to continue.
-func (r *Repo) LastTouchedPage(ctx context.Context, runID string) (int, error) {
-	var page int
+func (r *Repo) GetPages(ctx context.Context, runID string, limit int, workerID string) ([]Page, error) {
+	rows, err := r.pool.Query(ctx, `
+	WITH cte AS (
+		SELECT run_id, page_number
+		FROM pages
+		WHERE run_id = $1
+		  AND status = 'pending'
+		  AND next_attempt_at <= now()
+		ORDER BY page_number
+		LIMIT $2
+		FOR UPDATE SKIP LOCKED
+	)
+	UPDATE pages p
+	SET 
+		status = 'in_progress',
+		locked_by = $3,
+		locked_at = now(),
+		attempts = attempts + 1,
+		updated_at = now()
+	FROM cte
+	WHERE p.run_id = cte.run_id
+	  AND p.page_number = cte.page_number
+	RETURNING p.run_id::text, p.page_number, p.attempts, p.batch_id
+	`, runID, limit, workerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var pages []Page
+
+	for rows.Next() {
+		var p Page
+		if err := rows.Scan(&p.RunID, &p.PageNumber, &p.Attempts, &p.BatchID); err != nil {
+			return nil, err
+		}
+		pages = append(pages, p)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return pages, nil
+}
+
+// LastTouchedBatch returns the highest batch_id that has been started
+// (in_progress, done, empty, or failed) for this run. It is used to persist
+// last_exit_batch on graceful shutdown so resume knows where to continue.
+func (r *Repo) LastTouchedBatch(ctx context.Context, runID string) (int64, error) {
+	var batchID int64
 	err := r.pool.QueryRow(ctx, `
-select coalesce(max(page_number), 0)
+select coalesce(max(batch_id), 0)
 from pages
 where run_id = $1
   and status in ('in_progress', 'done', 'empty', 'failed')
-`, runID).Scan(&page)
-	return page, err
+`, runID).Scan(&batchID)
+	return batchID, err
 }
 
-// SetLastExitPage records the last page the worker reached before exiting.
-func (r *Repo) SetLastExitPage(ctx context.Context, runID string, page int) error {
+// SetLastExitBatch records the last batch the worker reached before exiting.
+func (r *Repo) SetLastExitBatch(ctx context.Context, runID string, batchID int64) error {
 	_, err := r.pool.Exec(ctx, `
-update runs set last_exit_page = $2 where id = $1
-`, runID, page)
+update runs set last_exit_batch = $2 where id = $1
+`, runID, batchID)
 	return err
 }
 
-// ResumeFromPage resets progress from resumePage onward so those pages are
+// ResumeFromBatch resets progress from resumeBatchID onward so those pages are
 // re-fetched. It:
-//  1. Deletes contact_keys first seen on pages >= resumePage (partial writes).
-//  2. Resets those pages status back to 'pending'.
+//  1. Deletes contact_keys first seen in batches >= resumeBatchID (partial writes).
+//  2. Resets those pages' status back to 'pending' and clears their batch_id.
 //
 // Returns (contactKeysDropped, pagesReset, error).
-func (r *Repo) ResumeFromPage(ctx context.Context, runID string, resumePage int) (int64, int64, error) {
+func (r *Repo) ResumeFromBatch(ctx context.Context, runID string, resumeBatchID int64) (int64, int64, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return 0, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Drop contact_keys that were inserted at or after the resume page.
+	// Drop contact_keys that were inserted in batches at or after the resume batch.
 	ct, err := tx.Exec(ctx, `
 delete from contact_keys
 where first_seen_run_id = $1
-  and first_seen_page >= $2
-`, runID, resumePage)
+  and first_seen_batch_id >= $2
+`, runID, resumeBatchID)
 	if err != nil {
 		return 0, 0, fmt.Errorf("drop contact_keys: %w", err)
 	}
 	dropped := ct.RowsAffected()
 
-	// Reset pages at or after resume page back to pending.
+	// Reset pages in batches at or after the resume batch back to pending.
 	ct, err = tx.Exec(ctx, `
 update pages
-set status        = 'pending',
-    attempts      = 0,
-    last_error    = null,
-    started_at    = null,
-    finished_at   = null,
-    locked_by     = null,
-    locked_at     = null,
+set status          = 'pending',
+    attempts        = 0,
+    last_error      = null,
+    started_at      = null,
+    finished_at     = null,
+    locked_by       = null,
+    locked_at       = null,
     next_attempt_at = now(),
-    updated_at    = now()
+    batch_id        = null,
+    updated_at      = now()
 where run_id = $1
-  and page_number >= $2
-`, runID, resumePage)
+  and batch_id >= $2
+`, runID, resumeBatchID)
 	if err != nil {
 		return 0, 0, fmt.Errorf("reset pages: %w", err)
 	}
 	reset := ct.RowsAffected()
 
-	// Clear stop_page if it falls within the reset range so the run does not
-	// terminate prematurely on an old boundary.
+	// Clear stop_page and last_exit_batch if they fall within the reset range.
 	if _, err = tx.Exec(ctx, `
 update runs
-set stop_page = null,
-    last_exit_page = null
+set stop_page       = null,
+    last_exit_batch = null
 where id = $1
-  and (stop_page is null or stop_page >= $2)
-`, runID, resumePage); err != nil {
-		return 0, 0, fmt.Errorf("clear stop_page: %w", err)
+  and (stop_page is null or exists (
+    select 1 from pages
+    where run_id = $1 and page_number >= stop_page and batch_id >= $2
+  ))
+`, runID, resumeBatchID); err != nil {
+		return 0, 0, fmt.Errorf("clear stop_page/last_exit_batch: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -310,6 +369,9 @@ with candidate as (
   order by p.page_number
   for update skip locked
   limit 1
+),
+new_batch as (
+  insert into page_batches(run_id) select $1 from candidate returning id
 )
 update pages p
 set status='in_progress',
@@ -318,11 +380,12 @@ set status='in_progress',
     started_at=coalesce(p.started_at, now()),
     locked_by=$2,
     locked_at=now(),
-    updated_at=now()
+    updated_at=now(),
+    batch_id=(select id from new_batch)
 from candidate c
 where p.run_id = c.run_id and p.page_number = c.page_number
-returning p.run_id::text, p.page_number, p.attempts
-`, runID, workerID, maxAttempts).Scan(&c.RunID, &c.PageNumber, &c.Attempts)
+returning p.run_id::text, p.page_number, p.attempts, p.batch_id
+`, runID, workerID, maxAttempts).Scan(&c.RunID, &c.PageNumber, &c.Attempts, &c.BatchID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -334,6 +397,114 @@ returning p.run_id::text, p.page_number, p.attempts
 		return nil, err
 	}
 	return &c, nil
+}
+
+// ClaimNextPages atomically claims up to `limit` pending pages and assigns them
+// all a single shared batch_id. The batch_id is a new row in the page_batches
+// table, returned in every ClaimedPage so callers can record it in contact_keys.
+//
+// Returns nil (not an error) when no pages are claimable right now.
+func (r *Repo) ClaimNextPages(
+	ctx context.Context,
+	runID string,
+	workerID string,
+	maxAttempts int,
+	limit int,
+) ([]ClaimedPage, error) {
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// First check: are there any claimable pages? If not, skip batch creation.
+	var count int
+	err = tx.QueryRow(ctx, `
+select count(*)
+from pages p
+join runs r on r.id = p.run_id
+where p.run_id = $1
+  and r.state = 'running'
+  and p.status = 'pending'
+  and p.next_attempt_at <= now()
+  and p.attempts < $2
+limit $3
+`, runID, maxAttempts, limit).Scan(&count)
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		// Nothing to claim — roll back (no-op) and return nil.
+		return nil, nil
+	}
+
+	// Create one batch row for all pages in this claim.
+	var batchID int64
+	err = tx.QueryRow(ctx, `
+insert into page_batches(run_id, worker_id) values ($1, $2) returning id
+`, runID, workerID).Scan(&batchID)
+	if err != nil {
+		return nil, fmt.Errorf("create page_batch: %w", err)
+	}
+
+	// Claim the pages, stamping them with the new batch_id.
+	rows, err := tx.Query(ctx, `
+with candidate as (
+  select p.run_id, p.page_number
+  from pages p
+  join runs r on r.id = p.run_id
+  where p.run_id = $1
+    and r.state = 'running'
+    and p.status = 'pending'
+    and p.next_attempt_at <= now()
+    and p.attempts < $3
+  order by p.page_number
+  for update skip locked
+  limit $4
+)
+update pages p
+set status          = 'in_progress',
+    attempts        = p.attempts + 1,
+    last_error      = null,
+    started_at      = coalesce(p.started_at, now()),
+    locked_by       = $2,
+    locked_at       = now(),
+    updated_at      = now(),
+    batch_id        = $5
+from candidate c
+where p.run_id = c.run_id
+  and p.page_number = c.page_number
+returning p.run_id::text, p.page_number, p.attempts, p.batch_id
+`, runID, workerID, maxAttempts, limit, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []ClaimedPage
+	for rows.Next() {
+		var c ClaimedPage
+		if err := rows.Scan(&c.RunID, &c.PageNumber, &c.Attempts, &c.BatchID); err != nil {
+			return nil, err
+		}
+		results = append(results, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(results) == 0 {
+		// Race: pages were claimed by another worker between the count and the
+		// update. Roll back (removes the orphan batch row too via cascade or
+		// the deferred delete below) and return nil to idle.
+		return nil, nil
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // ReapStaleInProgress resets in-progress pages that have been locked for
@@ -403,14 +574,18 @@ where id=$1
 	return ct.RowsAffected() > 0, nil
 }
 
-func (r *Repo) InsertContactKeys(ctx context.Context, tx Tx, runID string, page int, contacts []api.ContactInfo) (int64, error) {
+// InsertContactKeys now records the batch_id alongside the page number.
+// This is the key that makes resume-by-batch work: on resume we delete all
+// contact_keys whose first_seen_batch_id >= the last_exit_batch, then reset
+// the corresponding pages.
+func (r *Repo) InsertContactKeys(ctx context.Context, tx Tx, runID string, page int, batchID int64, contacts []api.ContactInfo) (int64, error) {
 	var inserted int64
 	for _, c := range contacts {
 		ct, err := tx.Exec(ctx, `
-insert into contact_keys(contact_key, contact_id, first_seen_run_id, first_seen_page)
-values ($1,$2,$3,$4)
+insert into contact_keys(contact_key, contact_id, first_seen_run_id, first_seen_page, first_seen_batch_id)
+values ($1,$2,$3,$4,$5)
 on conflict do nothing
-`, []byte(c.ContactKey), c.ContactID, runID, page)
+`, []byte(c.ContactKey), c.ContactID, runID, page, batchID)
 		if err != nil {
 			return inserted, err
 		}
