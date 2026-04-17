@@ -129,6 +129,7 @@ func (c *Client) FetchMessageHistory(ctx context.Context, auth Auth, contactID s
 		return MessageHistoryResponse{}, nil, err
 	}
 	defer resp.Body.Close()
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return MessageHistoryResponse{}, nil, err
@@ -185,7 +186,7 @@ func (c *Client) FetchMessageHistoryConcurrent(
 			// --- RETRY LOGIC ---
 			for i := 0; i < 3; i++ {
 				// Give each attempt its own 15-second deadline
-				reqCtx, cancel := context.WithTimeout(gctx, 30*time.Second)
+				reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 				history, _, fetchErr = c.FetchMessageHistory(reqCtx, auth, contact.ContactID)
 				cancel()
 
@@ -193,8 +194,13 @@ func (c *Client) FetchMessageHistoryConcurrent(
 					break // Success!
 				}
 
+				if gctx.Err() != nil {
+					return gctx.Err()
+				}
+
 				// If it's a timeout, wait a moment and try again
-				if reqCtx.Err() == context.DeadlineExceeded {
+				if gctx.Err() == context.DeadlineExceeded {
+					log.Printf("[HISTORY] attempt %d timeout contactID=%s, retrying", i+1, contact.ContactID)
 					time.Sleep(time.Duration(i+1) * 500 * time.Millisecond)
 					continue
 				}

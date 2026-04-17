@@ -81,11 +81,7 @@ update contact_keys set has_engagement_history = $2 where contact_id = $1
 	return err
 }
 
-func (r *Repo) BatchUpdateContactHasEngagementHistory(ctx context.Context, tx Tx, contacts []api.ContactInfo, hasEngagementHistory bool) error {
-	var contactIDs []string
-	for _, contact := range contacts {
-		contactIDs = append(contactIDs, contact.ContactID)
-	}
+func (r *Repo) BatchUpdateContactHasEngagementHistory(ctx context.Context, tx Tx, contactIDs []string, hasEngagementHistory bool) error {
 	_, err := tx.Exec(ctx, `
 update contact_keys set has_engagement_history = $1 where contact_id = any($2)
 `, hasEngagementHistory, contactIDs)
