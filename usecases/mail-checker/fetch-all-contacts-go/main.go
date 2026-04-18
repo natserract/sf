@@ -49,14 +49,14 @@ func main() {
 		auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
 		return cfg, auth, nil
 	}))
-	root.AddCommand(newWorkerCmd(func() (config.Config, api.Auth, error) {
-		cfg, err := config.FromEnvFull()
-		if err != nil {
-			return config.Config{}, api.Auth{}, err
-		}
-		auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
-		return cfg, auth, nil
-	}))
+	// root.AddCommand(newWorkerCmd(func() (config.Config, api.Auth, error) {
+	// 	cfg, err := config.FromEnvFull()
+	// 	if err != nil {
+	// 		return config.Config{}, api.Auth{}, err
+	// 	}
+	// 	auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
+	// 	return cfg, auth, nil
+	// }))
 	root.AddCommand(newStatusCmd(func() (config.Config, error) {
 		cfg, err := config.FromEnvFull()
 		if err != nil {

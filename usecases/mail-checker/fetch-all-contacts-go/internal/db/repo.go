@@ -651,15 +651,18 @@ where first_seen_run_id = $1
 	return total, err
 }
 
-// GetContactsForHistory fetches a batch of contacts where history hasn't been checked yet.
+// GetContactsForHistory fetches a batch of contacts whose history has not been
+// checked yet (history_checked_at IS NULL). This makes the processor resumable:
+// restarting after a crash simply picks up where it left off instead of
+// re-scanning the entire table.
 func (r *Repo) GetContactsForHistory(ctx context.Context, limit int) ([]api.ContactInfo, error) {
-	query := `
-        SELECT contact_id 
-        FROM contact_keys 
-        WHERE has_engagement_history = false 
-        LIMIT $1`
-
-	rows, err := r.pool.Query(ctx, query, limit)
+	rows, err := r.pool.Query(ctx, `
+SELECT contact_id
+FROM   contact_keys
+WHERE  history_checked_at IS NULL
+ORDER  BY contact_id          -- stable ordering avoids re-visiting the same rows
+LIMIT  $1
+`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -673,14 +676,139 @@ func (r *Repo) GetContactsForHistory(ctx context.Context, limit int) ([]api.Cont
 		}
 		contacts = append(contacts, c)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return contacts, nil
 }
 
-// UpdateHistoryStatus marks contacts as processed.
-func (r *Repo) UpdateHistoryStatus(ctx context.Context, contactIDs []string) error {
-	if len(contactIDs) == 0 {
+// UpdateHistoryStatus marks a batch of contacts as checked.
+//
+//   - withHistory  – contacts that had ≥1 message history entry; sets
+//     has_engagement_history = true AND history_checked_at = now()
+//   - allProcessed – every contact that was attempted in this batch (superset
+//     of withHistory); sets history_checked_at = now() so they are never
+//     re-visited, even when no history was found.
+//
+// Using two separate UPDATE statements keeps the query simple and lets
+// Postgres use the partial index on history_checked_at IS NULL efficiently.
+func (r *Repo) UpdateHistoryStatus(ctx context.Context, withHistory []string, allProcessed []string) error {
+	if len(allProcessed) == 0 {
 		return nil
 	}
-	_, err := r.pool.Exec(ctx, "UPDATE contact_keys SET has_engagement_history = true WHERE contact_id = ANY($1)", contactIDs)
-	return err
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// 1. Flag contacts that actually have history.
+	if len(withHistory) > 0 {
+		if _, err := tx.Exec(ctx, `
+UPDATE contact_keys
+SET    has_engagement_history = true,
+       history_checked_at     = now()
+WHERE  contact_id = ANY($1)
+`, withHistory); err != nil {
+			return fmt.Errorf("update with-history: %w", err)
+		}
+	}
+
+	// 2. Mark the rest of the batch as checked (no history found).
+	//    Using a NOT IN sub-select would be expensive; pass the two slices
+	//    directly and let Postgres handle the overlap.
+	if _, err := tx.Exec(ctx, `
+UPDATE contact_keys
+SET    history_checked_at = now()
+WHERE  contact_id         = ANY($1)
+  AND  history_checked_at IS NULL   -- skip rows already written above
+`, allProcessed); err != nil {
+		return fmt.Errorf("update checked-at: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
+
+// SavePageResult atomically inserts all contact keys for a page and marks the
+// page done in a single transaction.
+//
+// This is the only safe way to write page results: either both the contact keys
+// AND the page status land together, or neither does. It eliminates the
+// "batch_done but no contact_keys" failure mode that occurs when callers manage
+// their own transaction and commit/crash between the two writes.
+//
+// status must be "done" or "empty". Pass an empty contacts slice (not nil) when
+// status is "empty" — the insert loop is a no-op and the page is still marked
+// correctly.
+//
+// Returns the number of contact_keys rows actually inserted (conflicts excluded).
+func (r *Repo) SavePageResult(
+	ctx context.Context,
+	runID string,
+	page int,
+	batchID int64,
+	status string,
+	contacts []api.ContactInfo,
+) (inserted int64, err error) {
+	if status != "done" && status != "empty" {
+		return 0, fmt.Errorf("SavePageResult: invalid status %q (want \"done\" or \"empty\")", status)
+	}
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("SavePageResult: begin tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	// 1. Insert contact keys — all or nothing inside this transaction.
+	//    Using a single unnest-based statement instead of a per-row loop
+	//    avoids partial inserts if the loop errors halfway through.
+	if len(contacts) > 0 {
+		keys := make([][]byte, len(contacts))
+		ids := make([]string, len(contacts))
+		for i, c := range contacts {
+			keys[i] = []byte(c.ContactKey)
+			ids[i] = c.ContactID
+		}
+
+		ct, execErr := tx.Exec(ctx, `
+INSERT INTO contact_keys
+    (contact_key, contact_id, first_seen_run_id, first_seen_page, first_seen_batch_id)
+SELECT
+    unnest($1::bytea[]),
+    unnest($2::text[]),
+    $3,
+    $4,
+    $5
+ON CONFLICT DO NOTHING
+`, keys, ids, runID, page, batchID)
+		if execErr != nil {
+			err = fmt.Errorf("SavePageResult: insert contact_keys: %w", execErr)
+			return 0, err
+		}
+		inserted = ct.RowsAffected()
+	}
+
+	// 2. Mark page done — same transaction, so it only commits if step 1 succeeded.
+	if _, execErr := tx.Exec(ctx, `
+UPDATE pages
+SET    status      = $3,
+       finished_at = now(),
+       updated_at  = now()
+WHERE  run_id      = $1
+  AND  page_number = $2
+`, runID, page, status); execErr != nil {
+		err = fmt.Errorf("SavePageResult: mark page %s: %w", status, execErr)
+		return 0, err
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("SavePageResult: commit: %w", err)
+	}
+	return inserted, nil
 }
