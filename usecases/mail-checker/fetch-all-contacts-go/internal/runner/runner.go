@@ -185,7 +185,6 @@ func (p *Processor) Run(ctx context.Context, runID string) error {
 			for i, pg := range pages {
 				pageNums[i] = pg.PageNumber
 			}
-			log.Printf("[RUN] batch_start pages=%v", pageNums)
 
 			// Process every page in this batch concurrently.
 			// We use a fresh errgroup so a single page error stops the batch
@@ -197,6 +196,11 @@ func (p *Processor) Run(ctx context.Context, runID string) error {
 					return p.processPage(batchCtx, run, pg.PageNumber, pg.Attempts, pg.BatchID)
 				})
 			}
+			totalContacts, err := p.Repo.GetRunTotalContacts(ctx, run.ID)
+			if err != nil {
+				return err
+			}
+			logProgress(ctx, p.Repo, run.ID, totalContacts)
 
 			// WAIT: entire batch must finish before claiming the next one.
 			if err := batchG.Wait(); err != nil {
@@ -347,9 +351,14 @@ func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := p.Repo.InsertContactKeys(ctx, tx, run.ID, pageNumber, batchID, contacts); err != nil {
+	inserted, err := p.Repo.InsertContactKeys(ctx, tx, run.ID, pageNumber, batchID, contacts)
+	if err != nil {
 		log.Printf("[PROCESS] page=%d batch=%d InsertContactKeys error runID=%s err=%v", pageNumber, batchID, run.ID, err)
 		return err
+	}
+	if len(contacts) > 0 && inserted == 0 {
+		log.Printf("[PROCESS] page=%d returned %d contacts, but 0 were new. Potential overlap.", pageNumber, len(contacts))
+		// You could choose to mark the run as finished here if your logic dictates
 	}
 
 	status := "done"
@@ -365,14 +374,6 @@ func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int,
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-
-	fmt.Fprintf(p.Stdout, "[PROCESS] page=%d batch=%d done status=%s contacts=%d\n", pageNumber, batchID, status, len(contacts))
-
-	totalContacts, err := p.Repo.GetRunTotalContacts(ctx, run.ID)
-	if err != nil {
-		return err
-	}
-	logProgress(ctx, p.Repo, run.ID, totalContacts)
 	return nil
 }
 

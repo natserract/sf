@@ -84,6 +84,20 @@ from runs where id = $1
 	return out, nil
 }
 
+// GetLatestRunID returns the ID of the most recently created run, or ("", nil)
+// if no runs exist yet. Used by createRunAndSeedAllPages to top-up an existing
+// run instead of creating a duplicate.
+func (r *Repo) GetLatestRunID(ctx context.Context) (string, error) {
+	var id string
+	err := r.pool.QueryRow(ctx, `
+select id::text from runs order by created_at desc limit 1
+`).Scan(&id)
+	if err == pgx.ErrNoRows {
+		return "", nil
+	}
+	return id, err
+}
+
 func (r *Repo) UpdateContactHasEngagementHistory(ctx context.Context, tx Tx, contactID string, hasEngagementHistory bool) error {
 	_, err := tx.Exec(ctx, `
 update contact_keys set has_engagement_history = $2 where contact_id = $1
@@ -606,6 +620,17 @@ from pages
 where run_id=$1
 `, runID).Scan(&done, &failed, &empty, &inProgress, &pending)
 	return
+}
+
+// CountPages returns the number of page rows already seeded for this run,
+// regardless of their status. Used by createRunAndSeedAllPages to avoid
+// inserting duplicate pages when a run already has some pages seeded.
+func (r *Repo) CountPages(ctx context.Context) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx, `
+select count(*) from pages
+`).Scan(&count)
+	return count, err
 }
 
 func (r *Repo) GetRunTotalContacts(ctx context.Context, runID string) (int, error) {

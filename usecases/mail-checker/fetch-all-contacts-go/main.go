@@ -34,6 +34,13 @@ func main() {
 	root.PersistentFlags().StringVar(&csrfToken, "csrf-token", "", "X-CSRF-Token header value")
 	root.PersistentFlags().StringVar(&cookie, "cookie", "", "Cookie header value")
 
+	root.AddCommand(newMigrateCmd(func() (config.Config, error) {
+		cfg, err := config.FromEnvFull()
+		if err != nil {
+			return config.Config{}, err
+		}
+		return cfg, nil
+	}))
 	root.AddCommand(newStartRunCmd(func() (config.Config, api.Auth, error) {
 		cfg, err := config.FromEnvFull()
 		if err != nil {
@@ -42,14 +49,14 @@ func main() {
 		auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
 		return cfg, auth, nil
 	}))
-	// root.AddCommand(newWorkerCmd(func() (config.Config, api.Auth, error) {
-	// 	cfg, err := config.FromEnvFull()
-	// 	if err != nil {
-	// 		return config.Config{}, api.Auth{}, err
-	// 	}
-	// 	auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
-	// 	return cfg, auth, nil
-	// }))
+	root.AddCommand(newWorkerCmd(func() (config.Config, api.Auth, error) {
+		cfg, err := config.FromEnvFull()
+		if err != nil {
+			return config.Config{}, api.Auth{}, err
+		}
+		auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
+		return cfg, auth, nil
+	}))
 	root.AddCommand(newStatusCmd(func() (config.Config, error) {
 		cfg, err := config.FromEnvFull()
 		if err != nil {
@@ -169,6 +176,33 @@ func newFetchOnceCmd(build func() (api.Auth, config.Config, *api.Client, error))
 	cmd.Flags().StringVar(&filterValue, "filter-value", "", "Filter condition value (default: MOBILE)")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Print request details before fetching")
 	return cmd
+}
+
+func newMigrateCmd(build func() (config.Config, error)) *cobra.Command {
+	return &cobra.Command{
+		Use:   "migrate",
+		Short: "Apply database migrations and exit",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := build()
+			if err != nil {
+				return err
+			}
+			if cfg.DBDSN == "" {
+				return fmt.Errorf("DB_DSN is required")
+			}
+			pool, err := db.Open(cmd.Context(), cfg.DBDSN)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+
+			if err := db.ApplyMigrations(cmd.Context(), pool); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "migrations applied successfully")
+			return nil
+		},
+	}
 }
 
 func newStartRunCmd(build func() (config.Config, api.Auth, error)) *cobra.Command {
@@ -469,16 +503,46 @@ func createRunAndSeedAllPages(ctx context.Context, repo *db.Repo, client *api.Cl
 	if err != nil {
 		return "", 0, 0, 0, fmt.Errorf("fetch total count: %w", err)
 	}
+
 	totalCount := countResp.TotalCount
 	if totalCount < 0 {
 		totalCount = 0
 	}
 	totalPages := totalPagesFor(totalCount, cfg.PageSize)
-	runID, err := repo.CreateRun(ctx, cfg.PageSize, startedPage, cfg.APIBaseURL, "Is", "MOBILE", totalCount)
+
+	// Reuse the latest run if one already exists, so we never create a second
+	// run row and never seed the same pages twice.
+	runID, err := repo.GetLatestRunID(ctx)
 	if err != nil {
-		return "", 0, 0, 0, err
+		return "", 0, 0, 0, fmt.Errorf("get latest run: %w", err)
 	}
-	seededRows, err := repo.SeedPendingPages(ctx, runID, startedPage, totalPages, 10000)
+	if runID == "" {
+		// No run exists yet — create one.
+		runID, err = repo.CreateRun(ctx, cfg.PageSize, startedPage, cfg.APIBaseURL, "Is", "MOBILE", totalCount)
+		if err != nil {
+			return "", 0, 0, 0, err
+		}
+	}
+
+	// Count how many pages are already seeded for this run so we only insert
+	// the missing tail. This prevents duplicates when the command is re-run
+	// against an existing run or when pages were partially seeded before.
+	pagesSeeded, err := repo.CountPages(ctx)
+	if err != nil {
+		return "", 0, 0, 0, fmt.Errorf("count existing pages: %w", err)
+	}
+	if totalPages <= pagesSeeded {
+		// Already fully seeded — nothing to do.
+		log.Printf("run_id=%s already has %d/%d pages seeded, nothing to add", runID, pagesSeeded, totalPages)
+		return runID, totalCount, totalPages, 0, nil
+	}
+
+	fromPage := pagesSeeded + 1
+	if pagesSeeded == 0 && startedPage > fromPage {
+		fromPage = startedPage
+	}
+	log.Printf("run_id=%s seeding pages %d..%d (%d already present)", runID, fromPage, totalPages, pagesSeeded)
+	seededRows, err := repo.SeedPendingPages(ctx, runID, fromPage, totalPages, 10000)
 	if err != nil {
 		return "", 0, 0, 0, err
 	}

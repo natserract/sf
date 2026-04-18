@@ -31,4 +31,4 @@ create index if not exists contact_keys_batch_id_idx on contact_keys(first_seen_
 -- We keep last_exit_page for backward compat but add last_exit_batch as the
 -- preferred resume anchor.
 alter table runs
-    add column if not exists last_exit_batch bigint references page_batches(id);
+    add column if not exists last_exit_batch bigint;

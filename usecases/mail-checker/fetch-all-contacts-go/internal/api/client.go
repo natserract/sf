@@ -65,6 +65,9 @@ func (c *Client) FetchPage(ctx context.Context, auth Auth, p FetchPageParams) (R
 	if err != nil {
 		return Response{}, resp, err
 	}
+	if os.Getenv("API_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "FetchPage raw response: %s\n", string(raw))
+	}
 
 	var out Response
 	if err := json.Unmarshal(raw, &out); err != nil {
