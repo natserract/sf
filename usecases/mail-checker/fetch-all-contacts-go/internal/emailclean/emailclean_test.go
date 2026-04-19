@@ -11,6 +11,8 @@ func TestExtract(t *testing.T) {
 		{"%%oon1@gmail.com%%", "oon1@gmail.com", "oon1@gmail.com"},
 		{"%$<isfandiary@gmail.com>%%", "isfandiary@gmail.com", "isfandiary@gmail.com"},
 		{" %%<Ageviakharnadara@icloud.com>%% ", "Ageviakharnadara@icloud.com", "ageviakharnadara@icloud.com"},
+		{"13352543_oongabut@gmail.com", "oongabut@gmail.com", "oongabut@gmail.com"},
+		{"13352543_oongabut2@gmail.com... [38]", "oongabut2@gmail.com", "oongabut2@gmail.com"},
 	}
 	for _, tt := range tests {
 		got := Extract(tt.raw)

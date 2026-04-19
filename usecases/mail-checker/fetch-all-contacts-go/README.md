@@ -182,3 +182,13 @@ The web command wiring is defined in `cmd_web.go`.
 - Bearer/CSRF/Cookie are provided at history fetch time and are not required for CSV validation phases.
 - SMTP checks may fail depending on network/firewall/provider policy; failure details are stored per row.
 - For large CSV files, use higher worker count with caution and monitor DB/network limits.
+
+## Notes
+- The contact_key is `BYTEA` type. If you need full value, you need to cast the bytea to text
+```sql
+SELECT 
+    encode(contact_key, 'escape') as email_text, -- Converts bytea back to readable text
+    length(contact_key) as byte_len
+FROM contact_keys 
+WHERE contact_id = '238453796';
+```
