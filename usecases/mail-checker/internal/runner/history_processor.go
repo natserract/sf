@@ -3,9 +3,9 @@ package runner
 import (
 	"context"
 	"log"
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/api"
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/db"
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/validator"
+	"sf/usecases/mail-checker/internal/api"
+	"sf/usecases/mail-checker/internal/db"
+	"sf/usecases/mail-checker/internal/validator"
 	"strings"
 	"time"
 )

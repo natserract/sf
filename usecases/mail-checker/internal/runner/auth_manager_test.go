@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/api"
+	"sf/usecases/mail-checker/internal/api"
 )
 
 func TestAuthManager_ReauthenticateMaxAttempts(t *testing.T) {

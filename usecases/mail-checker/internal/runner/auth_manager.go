@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/api"
+	"sf/usecases/mail-checker/internal/api"
 )
 
 type AuthManager struct {

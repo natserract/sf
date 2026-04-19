@@ -1,4 +1,4 @@
-module sf/usecases/mail-checker/fetch-all-contacts-go
+module sf/usecases/mail-checker
 
 go 1.25.0
 

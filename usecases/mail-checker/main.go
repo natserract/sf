@@ -12,12 +12,12 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/analytics"
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/api"
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/config"
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/db"
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/runner"
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/validator"
+	"sf/usecases/mail-checker/internal/analytics"
+	"sf/usecases/mail-checker/internal/api"
+	"sf/usecases/mail-checker/internal/config"
+	"sf/usecases/mail-checker/internal/db"
+	"sf/usecases/mail-checker/internal/runner"
+	"sf/usecases/mail-checker/internal/validator"
 )
 
 func main() {
@@ -437,7 +437,7 @@ func newResumeCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "run_id=%s total_count=%d total_pages=%d seeded_rows=%d started_page=%d\n", runID, totalCount, totalPages, seededRows)
+			fmt.Fprintf(cmd.OutOrStdout(), "run_id=%s total_count=%d total_pages=%d seeded_rows=%d\n", runID, totalCount, totalPages, seededRows)
 
 			// Determine resume batch: explicit flag beats persisted value.
 			resumeBatch := fromBatch

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/api"
+	"sf/usecases/mail-checker/internal/api"
 	"time"
 
 	"github.com/jackc/pgx/v5"

@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/api"
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/db"
+	"sf/usecases/mail-checker/internal/api"
+	"sf/usecases/mail-checker/internal/db"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"

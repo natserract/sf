@@ -6,8 +6,8 @@ import (
 
 	truemail "github.com/truemail-rb/truemail-go"
 
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/emailclean"
-	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/score"
+	"sf/usecases/mail-checker/internal/emailclean"
+	"sf/usecases/mail-checker/internal/score"
 )
 
 type Step struct {
