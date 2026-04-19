@@ -24,6 +24,7 @@ type Run struct {
 	BaseURL        string
 	FilterOperator string
 	FilterValue    string
+	TotalContacts  int
 }
 
 // ClaimedPage is returned by ClaimNextPages. It now carries the batch_id that
@@ -145,17 +146,27 @@ returning id::text
 	return id, nil
 }
 
+func (r *Repo) UpdateTotalContacts(ctx context.Context, runID string, totalContacts int) error {
+	_, err := r.pool.Exec(ctx, `
+update runs
+set total_contacts = $2
+where id = $1
+`, runID, totalContacts)
+
+	return err
+}
+
 func (r *Repo) GetRun(ctx context.Context, runID string) (Run, error) {
 	var out Run
 	err := r.pool.QueryRow(ctx, `
 select id::text, created_at, state, stop_page, last_exit_batch, completed_at,
-       page_size, started_page, base_url, filter_operator, filter_value
+       page_size, started_page, base_url, filter_operator, filter_value, total_contacts
 from runs where id = $1
 `, runID).Scan(
 		&out.ID, &out.CreatedAt, &out.State,
 		&out.StopPage, &out.LastExitBatch, &out.CompletedAt,
 		&out.PageSize, &out.StartedPage,
-		&out.BaseURL, &out.FilterOperator, &out.FilterValue,
+		&out.BaseURL, &out.FilterOperator, &out.FilterValue, &out.TotalContacts,
 	)
 	if err != nil {
 		return Run{}, err

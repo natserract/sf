@@ -51,14 +51,14 @@ func main() {
 		auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
 		return cfg, auth, nil
 	}))
-	// root.AddCommand(newWorkerCmd(func() (config.Config, api.Auth, error) {
-	// 	cfg, err := config.FromEnvFull()
-	// 	if err != nil {
-	// 		return config.Config{}, api.Auth{}, err
-	// 	}
-	// 	auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
-	// 	return cfg, auth, nil
-	// }))
+	root.AddCommand(newWorkerCmd(func() (config.Config, api.Auth, error) {
+		cfg, err := config.FromEnvFull()
+		if err != nil {
+			return config.Config{}, api.Auth{}, err
+		}
+		auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
+		return cfg, auth, nil
+	}))
 	root.AddCommand(newStatusCmd(func() (config.Config, error) {
 		cfg, err := config.FromEnvFull()
 		if err != nil {
@@ -273,7 +273,7 @@ func newStartRunCmd(build func() (config.Config, api.Auth, error)) *cobra.Comman
 			}
 
 			repo := db.NewRepo(pool)
-			runID, totalCount, totalPages, seededRows, err := createRunAndSeedAllPages(cmd.Context(), repo, apiClient, auth, cfg, startedPage)
+			runID, totalCount, totalPages, seededRows, err := createRunAndSeedAllPages(cmd.Context(), repo, apiClient, auth, cfg)
 			if err != nil {
 				return err
 			}
@@ -321,7 +321,7 @@ func newWorkerCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 			if runID == "" {
 				var totalCount, totalPages int
 				var seededRows int64
-				runID, totalCount, totalPages, seededRows, err = createRunAndSeedAllPages(cmd.Context(), repo, apiClient, auth, cfg, 1)
+				runID, totalCount, totalPages, seededRows, err = createRunAndSeedAllPages(cmd.Context(), repo, apiClient, auth, cfg)
 				if err != nil {
 					return err
 				}
@@ -431,6 +431,13 @@ func newResumeCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 			}
 
 			repo := db.NewRepo(pool)
+			apiClient := api.NewClient(cfg.APIBaseURL)
+
+			runID, totalCount, totalPages, seededRows, err := createRunAndSeedAllPages(cmd.Context(), repo, apiClient, auth, cfg)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "run_id=%s total_count=%d total_pages=%d seeded_rows=%d started_page=%d\n", runID, totalCount, totalPages, seededRows)
 
 			// Determine resume batch: explicit flag beats persisted value.
 			resumeBatch := fromBatch
@@ -473,7 +480,6 @@ func newResumeCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 
 			// Kick off a worker immediately in the same process.
 			workerID := fmt.Sprintf("%d-%d", os.Getpid(), rand.Int())
-			apiClient := api.NewClient(cfg.APIBaseURL)
 			proc := &runner.Processor{
 				DB:       pool,
 				Repo:     repo,
@@ -529,7 +535,7 @@ func newResumeCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 	return cmd
 }
 
-func createRunAndSeedAllPages(ctx context.Context, repo *db.Repo, client *api.Client, auth api.Auth, cfg config.Config, startedPage int) (string, int, int, int64, error) {
+func createRunAndSeedAllPages(ctx context.Context, repo *db.Repo, client *api.Client, auth api.Auth, cfg config.Config) (string, int, int, int64, error) {
 	countResp, _, err := client.FetchCount(ctx, auth, api.FetchCountParams{
 		PageSize: cfg.PageSize,
 		Page:     1,
@@ -539,11 +545,12 @@ func createRunAndSeedAllPages(ctx context.Context, repo *db.Repo, client *api.Cl
 		return "", 0, 0, 0, fmt.Errorf("fetch total count: %w", err)
 	}
 
-	totalCount := countResp.TotalCount
+	totalCount := countResp.TotalCount // latest
 	if totalCount < 0 {
 		totalCount = 0
 	}
 	totalPages := totalPagesFor(totalCount, cfg.PageSize)
+	log.Printf("Get total count: %d, and total pages: %d", totalCount, totalPages)
 
 	// Reuse the latest run if one already exists, so we never create a second
 	// run row and never seed the same pages twice.
@@ -552,11 +559,24 @@ func createRunAndSeedAllPages(ctx context.Context, repo *db.Repo, client *api.Cl
 		return "", 0, 0, 0, fmt.Errorf("get latest run: %w", err)
 	}
 	if runID == "" {
+		// Count how many pages are already seeded for this run so we only insert
+		// the missing tail. This prevents duplicates when the command is re-run
+		// against an existing run or when pages were partially seeded before.
+		pagesSeeded, err := repo.CountPages(ctx)
+		if err != nil {
+			return "", 0, 0, 0, fmt.Errorf("count existing pages: %w", err)
+		}
+
 		// No run exists yet — create one.
-		runID, err = repo.CreateRun(ctx, cfg.PageSize, startedPage, cfg.APIBaseURL, "Is", "MOBILE", totalCount)
+		runID, err = repo.CreateRun(ctx, cfg.PageSize, pagesSeeded+1, cfg.APIBaseURL, "Is", "MOBILE", totalCount)
 		if err != nil {
 			return "", 0, 0, 0, err
 		}
+	}
+
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return "", 0, 0, 0, err
 	}
 
 	// Count how many pages are already seeded for this run so we only insert
@@ -572,12 +592,14 @@ func createRunAndSeedAllPages(ctx context.Context, repo *db.Repo, client *api.Cl
 		return runID, totalCount, totalPages, 0, nil
 	}
 
-	fromPage := pagesSeeded + 1
-	if pagesSeeded == 0 && startedPage > fromPage {
-		fromPage = startedPage
+	// Update total contact
+	if err := repo.UpdateTotalContacts(ctx, runID, totalCount); err != nil {
+		return "", 0, 0, 0, err
 	}
+
+	fromPage, toPage := newPageRange(run.TotalContacts, totalCount, cfg.PageSize, pagesSeeded)
 	log.Printf("run_id=%s seeding pages %d..%d (%d already present)", runID, fromPage, totalPages, pagesSeeded)
-	seededRows, err := repo.SeedPendingPages(ctx, runID, fromPage, totalPages, 10000)
+	seededRows, err := repo.SeedPendingPages(ctx, runID, fromPage, toPage, 10000)
 	if err != nil {
 		return "", 0, 0, 0, err
 	}
@@ -589,6 +611,29 @@ func totalPagesFor(totalCount int, pageSize int) int {
 		return 0
 	}
 	return (totalCount + pageSize - 1) / pageSize
+}
+
+func newPageRange(prev, latest, pageSize, lastProcessedPage int) (startPage, endPage int) {
+	if pageSize <= 0 || latest <= prev {
+		return 0, 0
+	}
+
+	latestPages := (latest + pageSize - 1) / pageSize
+	endPage = latestPages - 1
+
+	// start from next page after last processed
+	startPage = lastProcessedPage + 1
+
+	if startPage < 0 {
+		startPage = 0
+	}
+
+	// safety guard
+	if startPage > endPage {
+		return 0, 0
+	}
+
+	return
 }
 
 func validateAuthPreflight(ctx context.Context, client *api.Client, auth api.Auth, cfg config.Config) error {
