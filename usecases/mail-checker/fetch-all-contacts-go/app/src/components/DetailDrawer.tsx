@@ -8,11 +8,9 @@ const STAGES = [
   { key: "history", label: "History" },
 ];
 
-export default function DetailDrawer({ row, onClose }) {
+export default function DetailDrawer({ row, onClose }: { row: any; onClose: () => void }) {
   if (!row) return null;
-
-  const scoreColor = (s) =>
-    s >= 80 ? "#00e5a0" : s >= 50 ? "#f5a623" : "#ff4d6d";
+  const scoreColor = (s: number) => (s >= 80 ? "#00e5a0" : s >= 50 ? "#f5a623" : "#ff4d6d");
 
   return (
     <>
@@ -27,23 +25,12 @@ export default function DetailDrawer({ row, onClose }) {
         </div>
 
         <div className="drawer-body">
-          {/* Main info */}
           <section className="drawer-section">
-            <div className="drawer-kv">
-              <span>Run ID</span><code>{row.run_id}</code>
-            </div>
-            <div className="drawer-kv">
-              <span>Raw Key</span><code>{row.raw_contact_key}</code>
-            </div>
-            <div className="drawer-kv">
-              <span>Clean Candidate</span><code>{row.clean_candidate || "—"}</code>
-            </div>
-            <div className="drawer-kv">
-              <span>Normalized Email</span><code>{row.normalized_email || "—"}</code>
-            </div>
-            <div className="drawer-kv">
-              <span>Status</span><StatusBadge status={row.status} />
-            </div>
+            <div className="drawer-kv"><span>Run ID</span><code>{row.run_id}</code></div>
+            <div className="drawer-kv"><span>Raw Key</span><code>{row.raw_contact_key}</code></div>
+            <div className="drawer-kv"><span>Clean Candidate</span><code>{row.clean_candidate || "—"}</code></div>
+            <div className="drawer-kv"><span>Normalized Email</span><code>{row.normalized_email || "—"}</code></div>
+            <div className="drawer-kv"><span>Status</span><StatusBadge status={row.status} /></div>
             {row.failure_reason && (
               <div className="drawer-kv">
                 <span>Failure Reason</span>
@@ -52,7 +39,6 @@ export default function DetailDrawer({ row, onClose }) {
             )}
           </section>
 
-          {/* Score overview */}
           <section className="drawer-section">
             <div className="drawer-section-title">Total Score</div>
             <div className="drawer-score-hero" style={{ color: scoreColor(row.total_score) }}>
@@ -60,7 +46,6 @@ export default function DetailDrawer({ row, onClose }) {
             </div>
           </section>
 
-          {/* Per-stage */}
           <section className="drawer-section">
             <div className="drawer-section-title">Stage Results</div>
             <div className="stage-grid">
@@ -82,7 +67,6 @@ export default function DetailDrawer({ row, onClose }) {
             </div>
           </section>
 
-          {/* Timestamps */}
           <section className="drawer-section">
             <div className="drawer-kv">
               <span>Created At</span><span>{new Date(row.created_at).toLocaleString()}</span>

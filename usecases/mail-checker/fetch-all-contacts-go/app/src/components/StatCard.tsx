@@ -1,14 +1,14 @@
 type Props = {
   label: string;
   value: string;
-  icon: string
+  icon: string;
   accent?: string;
-  sub?: any
-}
+  sub?: React.ReactNode;
+};
 
 export default function StatCard({ label, value, icon, accent = "#5b8dee", sub }: Props) {
   return (
-    <div className="stat-card">
+    <div className="stat-card" style={{ ["--accent" as any]: accent }}>
       <div className="stat-icon">{icon}</div>
       <div className="stat-body">
         <div className="stat-label">{label}</div>

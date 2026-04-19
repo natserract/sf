@@ -11,6 +11,11 @@
     "types": [
       "vite/client"
     ],
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    },
     "skipLibCheck": true,
     /* Disable strictness */
     "strict": false,

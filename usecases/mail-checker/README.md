@@ -2,6 +2,8 @@
 
 > Export all, total records: 19,576,727. total page: 783.070
 
+![Demo](./screenshots/dashboard.png)
+
 **Validations Layers**:
 1. Syntax & format check
 2. ⁠⁠Domain & DNS check (e.g. [gmail.com](http://gmail.com))

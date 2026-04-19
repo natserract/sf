@@ -1,9 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useApi } from "../lib/useApi";
 import { api } from "../lib/api";
-import StatusBadge from "./StatusBadge"
-import ScoreBar from "./ScoreBar"
-import Skeleton from "./Skeleton"
+import StatusBadge from "./StatusBadge";
+import ScoreBar from "./ScoreBar";
+import Skeleton from "./Skeleton";
 import DetailDrawer from "./DetailDrawer";
 
 const PAGE_SIZE = 100;
@@ -25,18 +25,18 @@ const COLUMNS = [
 const ROW_HEIGHT = 44;
 const VISIBLE_BUFFER = 10;
 
-export default function ResultsTable({ runId }) {
+export default function ResultsTable({ runId }: { runId: string }) {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [sortBy, setSortBy] = useState("id");
-  const [sortDir, setSortDir] = useState("DESC");
-  const [selected, setSelected] = useState(null);
+  const [sortDir, setSortDir] = useState<"ASC" | "DESC">("DESC");
+  const [selected, setSelected] = useState<any>(null);
 
-  // scroll virtualization
-  const containerRef = useRef(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
 
   const params = [runId, page, search, statusFilter, sortBy, sortDir];
 
@@ -51,27 +51,42 @@ export default function ResultsTable({ runId }) {
         sort_by: sortBy,
         sort_dir: sortDir,
       }),
-    params
+    params,
   );
 
-  // reset page when filters change
-  useEffect(() => { setPage(1); }, [runId, search, statusFilter, sortBy, sortDir]);
+  useEffect(() => {
+    setPage(1);
+  }, [runId, search, statusFilter, sortBy, sortDir]);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      containerRef.current.scrollTop = 0;
+    }
+    setScrollTop(0);
+  }, [page, runId, search, statusFilter, sortBy, sortDir]);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const el = containerRef.current;
+    const update = () => setContainerHeight(el.clientHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const rows = data?.data || [];
   const total = data?.total || 0;
   const totalPages = data?.total_pages || 1;
 
-  // Virtual scroll calculation
-  const visibleCount = containerRef.current
-    ? Math.ceil(containerRef.current.clientHeight / ROW_HEIGHT) + VISIBLE_BUFFER * 2
-    : 30;
+  const visibleCount = Math.ceil((containerHeight || 600) / ROW_HEIGHT) + VISIBLE_BUFFER * 2;
   const startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VISIBLE_BUFFER);
   const endIdx = Math.min(rows.length, startIdx + visibleCount);
   const visibleRows = rows.slice(startIdx, endIdx);
   const paddingTop = startIdx * ROW_HEIGHT;
-  const paddingBottom = (rows.length - endIdx) * ROW_HEIGHT;
+  const paddingBottom = Math.max(0, (rows.length - endIdx) * ROW_HEIGHT);
 
-  const handleSort = (col) => {
+  const handleSort = (col: string) => {
     if (sortBy === col) {
       setSortDir((d) => (d === "ASC" ? "DESC" : "ASC"));
     } else {
@@ -84,17 +99,18 @@ export default function ResultsTable({ runId }) {
     setSearch(searchInput);
   }, [searchInput]);
 
-  const formatDate = (d) => {
+  const formatDate = (d?: string) => {
     if (!d) return "—";
     return new Date(d).toLocaleString("en-US", {
-      month: "short", day: "numeric",
-      hour: "2-digit", minute: "2-digit",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     });
   };
 
   return (
     <div className="results-page">
-      {/* Toolbar */}
       <div className="results-toolbar">
         <div className="search-group">
           <input
@@ -118,12 +134,9 @@ export default function ResultsTable({ runId }) {
           <option value="pending">Pending</option>
         </select>
 
-        <span className="results-count">
-          {total.toLocaleString()} records
-        </span>
+        <span className="results-count">{total.toLocaleString()} records</span>
       </div>
 
-      {/* Table */}
       <div className="table-wrapper">
         <div className="table-head">
           <table style={{ tableLayout: "fixed", width: "100%" }}>
@@ -179,7 +192,7 @@ export default function ResultsTable({ runId }) {
                     <td colSpan={COLUMNS.length} />
                   </tr>
                 )}
-                {visibleRows.map((row) => (
+                {visibleRows.map((row: any) => (
                   <tr
                     key={row.id}
                     className={`tr-row ${row.status === "failed" ? "tr-failed" : ""}`}
@@ -188,12 +201,8 @@ export default function ResultsTable({ runId }) {
                     <td className="td-cell td-muted">{row.row_number}</td>
                     <td className="td-cell td-mono">{row.contact_id}</td>
                     <td className="td-cell td-mono">{row.normalized_email || row.raw_contact_key}</td>
-                    <td className="td-cell">
-                      <StatusBadge status={row.status} />
-                    </td>
-                    <td className="td-cell">
-                      <ScoreBar score={row.total_score} />
-                    </td>
+                    <td className="td-cell"><StatusBadge status={row.status} /></td>
+                    <td className="td-cell"><ScoreBar score={row.total_score} /></td>
                     <td className="td-cell"><StatusBadge status={row.syntax_status} mini /></td>
                     <td className="td-cell"><StatusBadge status={row.domain_dns_status} mini /></td>
                     <td className="td-cell"><StatusBadge status={row.mx_status} mini /></td>
@@ -213,43 +222,18 @@ export default function ResultsTable({ runId }) {
         </div>
       </div>
 
-      {/* Pagination */}
       <div className="pagination">
-        <button
-          className="page-btn"
-          disabled={page <= 1}
-          onClick={() => setPage(1)}
-        >«</button>
-        <button
-          className="page-btn"
-          disabled={page <= 1}
-          onClick={() => setPage((p) => p - 1)}
-        >‹</button>
-
+        <button className="page-btn" disabled={page <= 1} onClick={() => setPage(1)}>«</button>
+        <button className="page-btn" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>‹</button>
         <span className="page-info">
           Page <strong>{page}</strong> of <strong>{totalPages}</strong>
         </span>
-
-        <button
-          className="page-btn"
-          disabled={page >= totalPages}
-          onClick={() => setPage((p) => p + 1)}
-        >›</button>
-        <button
-          className="page-btn"
-          disabled={page >= totalPages}
-          onClick={() => setPage(totalPages)}
-        >»</button>
-
-        <span className="page-size-info">
-          {PAGE_SIZE} / page
-        </span>
+        <button className="page-btn" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>›</button>
+        <button className="page-btn" disabled={page >= totalPages} onClick={() => setPage(totalPages)}>»</button>
+        <span className="page-size-info">{PAGE_SIZE} / page</span>
       </div>
 
-      {/* Detail Drawer */}
-      {selected && (
-        <DetailDrawer row={selected} onClose={() => setSelected(null)} />
-      )}
+      {selected && <DetailDrawer row={selected} onClose={() => setSelected(null)} />}
     </div>
   );
 }
