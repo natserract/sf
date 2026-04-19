@@ -330,6 +330,7 @@ func ExtractContactInfo(r Response) ([]ContactInfo, bool) {
 		return nil, true
 	}
 
+	println("Addresses: ", r.Addresses)
 	result := make([]ContactInfo, 0, len(r.Addresses))
 
 	for _, a := range r.Addresses {

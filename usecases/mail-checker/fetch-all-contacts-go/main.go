@@ -12,6 +12,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
+	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/analytics"
 	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/api"
 	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/config"
 	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/db"
@@ -90,6 +91,13 @@ func main() {
 		auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
 		return cfg, auth, nil
 	}))
+	root.AddCommand(newRestAPICmd(func() (config.Config, error) {
+		cfg, err := config.FromEnvFull()
+		if err != nil {
+			return config.Config{}, err
+		}
+		return cfg, nil
+	}))
 
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
@@ -103,6 +111,32 @@ func main() {
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
+	}
+}
+
+func newRestAPICmd(build func() (config.Config, error)) *cobra.Command {
+	return &cobra.Command{
+		Use:   "api",
+		Short: "Enable analytics server",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := build()
+			if err != nil {
+				return err
+			}
+
+			pool, err := db.Open(cmd.Context(), cfg.DBDSN)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+
+			analyticsApi := &analytics.Analytics{
+				DB: pool,
+			}
+
+			log.Println("Starting analytics server...")
+			return analyticsApi.Run(cmd.Context())
+		},
 	}
 }
 
