@@ -16,6 +16,7 @@ import (
 	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/config"
 	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/db"
 	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/runner"
+	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/validator"
 )
 
 func main() {
@@ -646,11 +647,13 @@ func newFetchHistoryCmd(build func() (config.Config, api.Auth, error)) *cobra.Co
 
 			// Initialize AuthManager with stdin/stdout for interactive prompts
 			authMgr := runner.NewAuthManager(auth, os.Stdin, os.Stdout, 5)
+			validatorMgr := validator.NewService()
 
 			processor := &runner.HistoryProcessor{
 				Repo:       repo,
 				API:        client,
 				AuthMgr:    authMgr,
+				Validator:  validatorMgr,
 				MaxWorkers: 10,  // Or from config
 				BatchSize:  100, // Or from config
 			}

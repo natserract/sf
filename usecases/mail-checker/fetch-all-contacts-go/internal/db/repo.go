@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sf/usecases/mail-checker/fetch-all-contacts-go/internal/api"
 	"time"
@@ -32,6 +33,84 @@ type ClaimedPage struct {
 	PageNumber int
 	Attempts   int
 	BatchID    int64
+}
+
+type CreateValidationResultInput struct {
+	RowNumber     int
+	ContactID     string
+	RawContactKey string
+}
+
+type ValidationUpdate struct {
+	ID              int64
+	Status          string
+	FailureReason   string
+	CleanCandidate  string
+	NormalizedEmail string
+	SyntaxStatus    string
+	SyntaxReason    string
+	SyntaxLatencyMS int
+	SyntaxScore     int
+	DomainDNSStatus string
+	DomainDNSReason string
+	DomainLatencyMS int
+	DomainScore     int
+	MXStatus        string
+	MXReason        string
+	MXLatencyMS     int
+	MXScore         int
+	SMTPStatus      string
+	SMTPReason      string
+	SMTPLatencyMS   int
+	SMTPScore       int
+	HistoryStatus   string
+	HistoryReason   string
+	HistoryScore    int
+	TotalScore      int
+}
+
+type ValidationRow struct {
+	ID              int64           `json:"id"`
+	RunID           string          `json:"runId"`
+	RowNumber       int             `json:"rowNumber"`
+	ContactID       string          `json:"contactId"`
+	RawContactKey   string          `json:"rawContactKey"`
+	CleanCandidate  string          `json:"cleanCandidate"`
+	NormalizedEmail string          `json:"normalizedEmail"`
+	Status          string          `json:"status"`
+	FailureReason   string          `json:"failureReason"`
+	SyntaxStatus    string          `json:"syntaxStatus"`
+	SyntaxReason    string          `json:"syntaxReason"`
+	SyntaxLatencyMS int             `json:"syntaxLatencyMs"`
+	SyntaxScore     int             `json:"syntaxScore"`
+	DomainDNSStatus string          `json:"domainDnsStatus"`
+	DomainDNSReason string          `json:"domainDnsReason"`
+	DomainLatencyMS int             `json:"domainDnsLatencyMs"`
+	DomainScore     int             `json:"domainDnsScore"`
+	MXStatus        string          `json:"mxStatus"`
+	MXReason        string          `json:"mxReason"`
+	MXLatencyMS     int             `json:"mxLatencyMs"`
+	MXScore         int             `json:"mxScore"`
+	SMTPStatus      string          `json:"smtpStatus"`
+	SMTPReason      string          `json:"smtpReason"`
+	SMTPLatencyMS   int             `json:"smtpLatencyMs"`
+	SMTPScore       int             `json:"smtpScore"`
+	HistoryStatus   string          `json:"historyStatus"`
+	HistoryReason   string          `json:"historyReason"`
+	HistoryScore    int             `json:"historyScore"`
+	HistoryPayload  json.RawMessage `json:"historyPayload,omitempty"`
+	TotalScore      int             `json:"totalScore"`
+}
+
+type RunProgress struct {
+	RunID       string `json:"runId"`
+	State       string `json:"state"`
+	TotalRows   int    `json:"totalRows"`
+	Pending     int64  `json:"pending"`
+	InProgress  int64  `json:"inProgress"`
+	Done        int64  `json:"done"`
+	Failed      int64  `json:"failed"`
+	LastUpdated string `json:"lastUpdated"`
 }
 
 type Repo struct {
@@ -657,7 +736,8 @@ where first_seen_run_id = $1
 // re-scanning the entire table.
 func (r *Repo) GetContactsForHistory(ctx context.Context, limit int) ([]api.ContactInfo, error) {
 	rows, err := r.pool.Query(ctx, `
-SELECT contact_id
+SELECT contact_id,
+       encode(contact_key, 'escape') AS contact_key
 FROM   contact_keys
 WHERE  history_checked_at IS NULL
 ORDER  BY contact_id          -- stable ordering avoids re-visiting the same rows
@@ -671,7 +751,7 @@ LIMIT  $1
 	var contacts []api.ContactInfo
 	for rows.Next() {
 		var c api.ContactInfo
-		if err := rows.Scan(&c.ContactID); err != nil {
+		if err := rows.Scan(&c.ContactID, &c.ContactKey); err != nil {
 			return nil, err
 		}
 		contacts = append(contacts, c)
@@ -811,4 +891,341 @@ WHERE  run_id      = $1
 		return 0, fmt.Errorf("SavePageResult: commit: %w", err)
 	}
 	return inserted, nil
+}
+
+func (r *Repo) CreateValidationRun(ctx context.Context, sourceFile string, totalRows int) (string, error) {
+	var id string
+	err := r.pool.QueryRow(ctx, `
+insert into validation_runs(source_file, total_rows, state, started_at)
+values ($1, $2, 'running', now())
+returning id::text
+`, sourceFile, totalRows).Scan(&id)
+	return id, err
+}
+
+func (r *Repo) CreateValidationResults(ctx context.Context, runID string, rows []CreateValidationResultInput) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	rowNumbers := make([]int32, len(rows))
+	contactIDs := make([]string, len(rows))
+	rawKeys := make([]string, len(rows))
+	for i, row := range rows {
+		rowNumbers[i] = int32(row.RowNumber)
+		contactIDs[i] = row.ContactID
+		rawKeys[i] = row.RawContactKey
+	}
+
+	// bulk_create_validation_results inserts all rows in a single unnest
+	// statement. ON CONFLICT DO NOTHING makes it safe to call more than once.
+	_, err := r.pool.Exec(ctx,
+		`SELECT bulk_create_validation_results($1, $2, $3, $4)`,
+		runID, rowNumbers, contactIDs, rawKeys,
+	)
+	return err
+}
+
+func (r *Repo) UpdateValidation(ctx context.Context, in ValidationUpdate) error {
+	_, err := r.pool.Exec(ctx, `
+update validation_results
+set
+  status=$2,
+  failure_reason=$3,
+  clean_candidate=$4,
+  normalized_email=$5,
+  syntax_status=$6,
+  syntax_reason=$7,
+  syntax_latency_ms=$8,
+  syntax_score=$9,
+  domain_dns_status=$10,
+  domain_dns_reason=$11,
+  domain_dns_latency_ms=$12,
+  domain_dns_score=$13,
+  mx_status=$14,
+  mx_reason=$15,
+  mx_latency_ms=$16,
+  mx_score=$17,
+  smtp_status=$18,
+  smtp_reason=$19,
+  smtp_latency_ms=$20,
+  smtp_score=$21,
+  history_status=$22,
+  history_reason=$23,
+  history_score=$24,
+  total_score=$25,
+  updated_at=now()
+where id = $1
+`, in.ID, in.Status, in.FailureReason, in.CleanCandidate, in.NormalizedEmail, in.SyntaxStatus, in.SyntaxReason, in.SyntaxLatencyMS, in.SyntaxScore,
+		in.DomainDNSStatus, in.DomainDNSReason, in.DomainLatencyMS, in.DomainScore, in.MXStatus, in.MXReason, in.MXLatencyMS, in.MXScore,
+		in.SMTPStatus, in.SMTPReason, in.SMTPLatencyMS, in.SMTPScore, in.HistoryStatus, in.HistoryReason, in.HistoryScore, in.TotalScore)
+	return err
+}
+
+func (r *Repo) CompleteValidationRun(ctx context.Context, runID string) (bool, error) {
+	ct, err := r.pool.Exec(ctx, `
+update validation_runs
+set state='completed',
+    completed_at=now()
+where id = $1
+  and state='running'
+  and not exists (
+    select 1
+    from validation_results
+    where run_id = $1 and status in ('pending', 'in_progress')
+  )
+`, runID)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() > 0, nil
+}
+
+func (r *Repo) ListResults(ctx context.Context, runID string, offset int, limit int, q string) ([]ValidationRow, int64, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if q == "" {
+		q = "%"
+	} else {
+		q = "%" + q + "%"
+	}
+
+	var total int64
+	if err := r.pool.QueryRow(ctx, `
+select count(*)
+from validation_results
+where run_id = $1 and (raw_contact_key ilike $2 or normalized_email ilike $2 or contact_id ilike $2)
+`, runID, q).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := r.pool.Query(ctx, `
+select id, run_id::text, row_number, contact_id, raw_contact_key, coalesce(clean_candidate, ''), coalesce(normalized_email, ''),
+status, coalesce(failure_reason, ''), coalesce(syntax_status, ''), coalesce(domain_dns_status, ''), coalesce(mx_status, ''),
+coalesce(smtp_status, ''), coalesce(history_status, ''), total_score
+from validation_results
+where run_id = $1 and (raw_contact_key ilike $2 or normalized_email ilike $2 or contact_id ilike $2)
+order by row_number
+offset $3 limit $4
+`, runID, q, offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := make([]ValidationRow, 0, limit)
+	for rows.Next() {
+		var row ValidationRow
+		if err := rows.Scan(&row.ID, &row.RunID, &row.RowNumber, &row.ContactID, &row.RawContactKey, &row.CleanCandidate, &row.NormalizedEmail,
+			&row.Status, &row.FailureReason, &row.SyntaxStatus, &row.DomainDNSStatus, &row.MXStatus, &row.SMTPStatus, &row.HistoryStatus, &row.TotalScore); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, row)
+	}
+	return out, total, rows.Err()
+}
+
+func (r *Repo) GetResult(ctx context.Context, runID string, rowID int64) (ValidationRow, error) {
+	var row ValidationRow
+	err := r.pool.QueryRow(ctx, `
+select id, run_id::text, row_number, contact_id, raw_contact_key, coalesce(clean_candidate, ''), coalesce(normalized_email, ''),
+status, coalesce(failure_reason, ''),
+coalesce(syntax_status, ''), coalesce(syntax_reason, ''), syntax_latency_ms, syntax_score,
+coalesce(domain_dns_status, ''), coalesce(domain_dns_reason, ''), domain_dns_latency_ms, domain_dns_score,
+coalesce(mx_status, ''), coalesce(mx_reason, ''), mx_latency_ms, mx_score,
+coalesce(smtp_status, ''), coalesce(smtp_reason, ''), smtp_latency_ms, smtp_score,
+coalesce(history_status, ''), coalesce(history_reason, ''), history_score, coalesce(history_payload, '{}'::jsonb)::text, total_score
+from validation_results
+where run_id = $1 and id = $2
+`, runID, rowID).Scan(
+		&row.ID, &row.RunID, &row.RowNumber, &row.ContactID, &row.RawContactKey, &row.CleanCandidate, &row.NormalizedEmail,
+		&row.Status, &row.FailureReason,
+		&row.SyntaxStatus, &row.SyntaxReason, &row.SyntaxLatencyMS, &row.SyntaxScore,
+		&row.DomainDNSStatus, &row.DomainDNSReason, &row.DomainLatencyMS, &row.DomainScore,
+		&row.MXStatus, &row.MXReason, &row.MXLatencyMS, &row.MXScore,
+		&row.SMTPStatus, &row.SMTPReason, &row.SMTPLatencyMS, &row.SMTPScore,
+		&row.HistoryStatus, &row.HistoryReason, &row.HistoryScore, &row.HistoryPayload, &row.TotalScore,
+	)
+	return row, err
+}
+
+// MarkValidationResultsInProgress transitions validation_results rows for the
+// given contact IDs to status='in_progress'. Called before the validator loop
+// starts so a mid-batch crash leaves rows recoverable rather than stuck on
+// 'pending'. Rows already in a terminal state are left untouched.
+func (r *Repo) MarkValidationResultsInProgress(ctx context.Context, contactIDs []string) error {
+	if len(contactIDs) == 0 {
+		return nil
+	}
+	_, err := r.pool.Exec(ctx, `
+UPDATE validation_results
+SET    status     = 'in_progress',
+       updated_at = now()
+WHERE  contact_id = ANY($1)
+  AND  status NOT IN ('done', 'failed')
+`, contactIDs)
+	return err
+}
+
+// ContactValidationUpdate carries the full validator result for one contact.
+// Used by BulkUpdateValidationByContactID.
+type ContactValidationUpdate struct {
+	ContactID       string
+	Status          string // "done" | "failed"
+	FailureReason   string
+	CleanCandidate  string
+	NormalizedEmail string
+	SyntaxStatus    string
+	SyntaxReason    string
+	SyntaxLatencyMS int
+	SyntaxScore     int
+	DomainDNSStatus string
+	DomainDNSReason string
+	DomainLatencyMS int
+	DomainScore     int
+	MXStatus        string
+	MXReason        string
+	MXLatencyMS     int
+	MXScore         int
+	SMTPStatus      string
+	SMTPReason      string
+	SMTPLatencyMS   int
+	SMTPScore       int
+	TotalScore      int
+}
+
+// BulkUpdateValidationByContactID writes all validator results for a batch in
+// a single transaction using a temporary table + UPDATE … FROM join instead of
+// one UPDATE per contact. It keys on contact_id because the history processor
+// works off contact_keys and does not hold the validation_results bigserial id.
+func (r *Repo) BulkUpdateValidationByContactID(ctx context.Context, updates []ContactValidationUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("BulkUpdateValidationByContactID: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `
+CREATE TEMP TABLE _val_batch (
+    contact_id            text NOT NULL,
+    status                text NOT NULL,
+    failure_reason        text NOT NULL DEFAULT '',
+    clean_candidate       text NOT NULL DEFAULT '',
+    normalized_email      text NOT NULL DEFAULT '',
+    syntax_status         text NOT NULL DEFAULT '',
+    syntax_reason         text NOT NULL DEFAULT '',
+    syntax_latency_ms     int  NOT NULL DEFAULT 0,
+    syntax_score          int  NOT NULL DEFAULT 0,
+    domain_dns_status     text NOT NULL DEFAULT '',
+    domain_dns_reason     text NOT NULL DEFAULT '',
+    domain_dns_latency_ms int  NOT NULL DEFAULT 0,
+    domain_dns_score      int  NOT NULL DEFAULT 0,
+    mx_status             text NOT NULL DEFAULT '',
+    mx_reason             text NOT NULL DEFAULT '',
+    mx_latency_ms         int  NOT NULL DEFAULT 0,
+    mx_score              int  NOT NULL DEFAULT 0,
+    smtp_status           text NOT NULL DEFAULT '',
+    smtp_reason           text NOT NULL DEFAULT '',
+    smtp_latency_ms       int  NOT NULL DEFAULT 0,
+    smtp_score            int  NOT NULL DEFAULT 0,
+    total_score           int  NOT NULL DEFAULT 0
+) ON COMMIT DROP
+`); err != nil {
+		return fmt.Errorf("BulkUpdateValidationByContactID: create temp table: %w", err)
+	}
+
+	batchRows := make([][]any, len(updates))
+	for i, u := range updates {
+		batchRows[i] = []any{
+			u.ContactID, u.Status, u.FailureReason, u.CleanCandidate, u.NormalizedEmail,
+			u.SyntaxStatus, u.SyntaxReason, u.SyntaxLatencyMS, u.SyntaxScore,
+			u.DomainDNSStatus, u.DomainDNSReason, u.DomainLatencyMS, u.DomainScore,
+			u.MXStatus, u.MXReason, u.MXLatencyMS, u.MXScore,
+			u.SMTPStatus, u.SMTPReason, u.SMTPLatencyMS, u.SMTPScore,
+			u.TotalScore,
+		}
+	}
+
+	if _, err := tx.CopyFrom(
+		ctx,
+		pgx.Identifier{"_val_batch"},
+		[]string{
+			"contact_id", "status", "failure_reason", "clean_candidate", "normalized_email",
+			"syntax_status", "syntax_reason", "syntax_latency_ms", "syntax_score",
+			"domain_dns_status", "domain_dns_reason", "domain_dns_latency_ms", "domain_dns_score",
+			"mx_status", "mx_reason", "mx_latency_ms", "mx_score",
+			"smtp_status", "smtp_reason", "smtp_latency_ms", "smtp_score",
+			"total_score",
+		},
+		pgx.CopyFromRows(batchRows),
+	); err != nil {
+		return fmt.Errorf("BulkUpdateValidationByContactID: copy rows: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+UPDATE validation_results vr
+SET    status                = b.status,
+       failure_reason        = b.failure_reason,
+       clean_candidate       = b.clean_candidate,
+       normalized_email      = b.normalized_email,
+       syntax_status         = b.syntax_status,
+       syntax_reason         = b.syntax_reason,
+       syntax_latency_ms     = b.syntax_latency_ms,
+       syntax_score          = b.syntax_score,
+       domain_dns_status     = b.domain_dns_status,
+       domain_dns_reason     = b.domain_dns_reason,
+       domain_dns_latency_ms = b.domain_dns_latency_ms,
+       domain_dns_score      = b.domain_dns_score,
+       mx_status             = b.mx_status,
+       mx_reason             = b.mx_reason,
+       mx_latency_ms         = b.mx_latency_ms,
+       mx_score              = b.mx_score,
+       smtp_status           = b.smtp_status,
+       smtp_reason           = b.smtp_reason,
+       smtp_latency_ms       = b.smtp_latency_ms,
+       smtp_score            = b.smtp_score,
+       total_score           = b.total_score,
+       updated_at            = now()
+FROM   _val_batch b
+WHERE  vr.contact_id = b.contact_id
+`); err != nil {
+		return fmt.Errorf("BulkUpdateValidationByContactID: apply updates: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("BulkUpdateValidationByContactID: commit: %w", err)
+	}
+	return nil
+}
+
+func (r *Repo) GetPendingValidationResult(ctx context.Context, runID string) (*ValidationRow, error) {
+	row := ValidationRow{}
+	err := r.pool.QueryRow(ctx, `
+with candidate as (
+  select id
+  from validation_results
+  where run_id = $1 and status = 'pending'
+  order by row_number
+  for update skip locked
+  limit 1
+)
+update validation_results vr
+set status = 'in_progress',
+    updated_at = now()
+from candidate c
+where vr.id = c.id
+returning vr.id, vr.run_id::text, vr.row_number, vr.contact_id, vr.raw_contact_key
+`, runID).Scan(&row.ID, &row.RunID, &row.RowNumber, &row.ContactID, &row.RawContactKey)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &row, nil
 }
