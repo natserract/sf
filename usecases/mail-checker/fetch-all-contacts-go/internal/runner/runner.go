@@ -351,6 +351,11 @@ func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	log.Println("Processing page: ", pageNumber, batchID)
+	for _, c := range contacts {
+		log.Println("Contact do it: ", c.ContactKey)
+	}
+
 	inserted, err := p.Repo.SavePageResult(ctx, run.ID, pageNumber, batchID, "done", contacts)
 	if err != nil {
 		log.Printf("[PROCESS] page=%d batch=%d InsertContactKeys error runID=%s err=%v", pageNumber, batchID, run.ID, err)

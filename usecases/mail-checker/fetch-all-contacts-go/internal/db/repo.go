@@ -519,7 +519,7 @@ from pages p
 join runs r on r.id = p.run_id
 where p.run_id = $1
   and r.state = 'running'
-  and p.status = 'pending'
+  and (p.status = 'pending' or p.status = 'failed')
   and p.next_attempt_at <= now()
   and p.attempts < $2
 limit $3
@@ -549,7 +549,7 @@ with candidate as (
   join runs r on r.id = p.run_id
   where p.run_id = $1
     and r.state = 'running'
-    and p.status = 'pending'
+    and (p.status = 'pending' or p.status = 'failed')
     and p.next_attempt_at <= now()
     and p.attempts < $3
   order by p.page_number
