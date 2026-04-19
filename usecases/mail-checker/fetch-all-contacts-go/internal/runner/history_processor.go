@@ -68,22 +68,25 @@ func (p *HistoryProcessor) Run(ctx context.Context) error {
 				}
 
 				result := p.Validator.Validate(ctx, c.ContactKey)
+
+				// Validate non email type contact key
 				isPhoneNumber := validator.ValidatePhoneNumber(c.ContactKey, "ID")
+				isNumber := validator.IsNumber(c.ContactKey)
 
 				overallStatus := "done"
 				if result.Status == "failed" {
 					overallStatus = "failed"
 				}
 
-				if isPhoneNumber {
+				if isPhoneNumber || isNumber {
 					_ = p.Repo.UpdateValidation(ctx, db.ValidationUpdate{
 						ID:              row.ID,
 						Status:          "done", // skipped
-						FailureReason:   "Skipped is phone number",
+						FailureReason:   "Skipped is phone or number",
 						CleanCandidate:  c.ContactKey,
 						NormalizedEmail: "",
-						SyntaxStatus:    "done",
-						SyntaxReason:    "Skipped is phone number",
+						SyntaxStatus:    "skipped",
+						SyntaxReason:    "Skipped is phone or number",
 						SyntaxLatencyMS: 0,
 						SyntaxScore:     0,
 						DomainDNSStatus: "skipped",
@@ -101,7 +104,7 @@ func (p *HistoryProcessor) Run(ctx context.Context) error {
 						HistoryStatus:   "done",
 						HistoryReason:   "fetch on demand",
 						HistoryScore:    0,
-						TotalScore:      100, // let it pass, we don't check email yet
+						TotalScore:      100, // let it pass, we don't check phone number yet
 					})
 				} else {
 					_ = p.Repo.UpdateValidation(ctx, db.ValidationUpdate{

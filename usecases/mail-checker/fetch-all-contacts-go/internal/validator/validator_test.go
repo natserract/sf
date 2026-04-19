@@ -15,3 +15,25 @@ func TestValidateInvalidSyntax(t *testing.T) {
 		t.Fatalf("expected downstream checks skipped, got domain=%q mx=%q smtp=%q", got.Domain.Status, got.MX.Status, got.SMTP.Status)
 	}
 }
+
+func TestIsNumber(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		// Data from your list
+		{"34689257191", true},
+		{"447405671467", true},
+		{"4915210899596", true},
+		{"31620268917", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			result := IsNumber(tc.input)
+			if result != tc.expected {
+				t.Errorf("IsNumber(%s) = %v; want %v", tc.input, result, tc.expected)
+			}
+		})
+	}
+}
