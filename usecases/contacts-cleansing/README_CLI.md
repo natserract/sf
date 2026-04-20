@@ -1,4 +1,4 @@
-# Mail Checker
+# Contacts Cleansing CLI
 
 This CLI fetches all contact pages from Marketing Cloud, stores `contactKey.value` in Postgres, and tracks durable page jobs in Postgres so workers can resume safely after crashes or `CTRL+C`.
 
