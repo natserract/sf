@@ -42,7 +42,7 @@ func NewService() *Service {
 		ResponseTimeout:       10,
 		ConnectionAttempts:    2,
 		SmtpFailFast:          false,
-		SmtpSafeCheck:         false,
+		SmtpSafeCheck:         true,
 	})
 	return &Service{
 		configuration: cfg,

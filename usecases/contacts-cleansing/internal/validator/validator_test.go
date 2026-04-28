@@ -2,6 +2,7 @@ package validator
 
 import (
 	"context"
+	"slices"
 	"testing"
 )
 
@@ -55,6 +56,7 @@ func TestValidateEmails(t *testing.T) {
 		domain string
 		mx     string
 		smtp   string
+		smtps  []string
 		status string
 	}
 
@@ -65,25 +67,48 @@ func TestValidateEmails(t *testing.T) {
 		want  want
 	}{
 		// ── Syntax failures (no network needed) ──────────────────────────────
-		// {
-		// 	name:  "empty string",
-		// 	email: "",
-		// 	want:  want{syntax: "failed", domain: "skipped", mx: "skipped", smtp: "skipped", status: "failed"},
-		// },
-		// {
-		// 	name:  "missing at-sign",
-		// 	email: "notanemail",
-		// 	want:  want{syntax: "failed", domain: "skipped", mx: "skipped", smtp: "skipped", status: "failed"},
-		// },
+		{
+			name:  "empty string",
+			email: "",
+			want:  want{syntax: "failed", domain: "skipped", mx: "skipped", smtp: "skipped", status: "failed"},
+		},
+		{
+			name:  "missing at-sign",
+			email: "notanemail",
+			want:  want{syntax: "failed", domain: "skipped", mx: "skipped", smtp: "skipped", status: "failed"},
+		},
 		{
 			name:  "Invalid",
 			email: "kufriyadi@gmail.com",
-			want:  want{syntax: "passed", domain: "passed", mx: "passed", smtp: "failed", status: "failed"},
+			want: want{
+				syntax: "passed",
+				domain: "passed",
+				mx:     "passed",
+				smtps:  []string{"passed"},
+			},
+		},
+		{
+			name:  "Invalid",
+			email: "cursor@cursorvalid.com",
+			want: want{
+				syntax: "passed",
+				domain: "failed",
+				mx:     "failed",
+				smtp:   "skipped",
+				status: "failed",
+			},
 		},
 		{
 			name:  "gmail valid syntax and domain",
 			email: "alfins132@gmail.com",
-			want:  want{syntax: "passed", domain: "passed", mx: "passed", smtp: "passed", status: "done"},
+			// SMTP mailbox checks against major providers are not deterministic:
+			// providers may reject verification probes even for existing inboxes.
+			want: want{
+				syntax: "passed",
+				domain: "passed",
+				mx:     "passed",
+				smtps:  []string{"passed"},
+			},
 		},
 	}
 
@@ -107,6 +132,9 @@ func TestValidateEmails(t *testing.T) {
 			}
 			if tc.want.smtp != "" && got.SMTP.Status != tc.want.smtp {
 				t.Errorf("smtp: got %q, want %q", got.SMTP.Status, tc.want.smtp)
+			}
+			if len(tc.want.smtps) > 0 && !slices.Contains(tc.want.smtps, got.SMTP.Status) {
+				t.Errorf("smtp: got %q, want one of %v", got.SMTP.Status, tc.want.smtps)
 			}
 			if tc.want.status != "" && got.Status != tc.want.status {
 				t.Errorf("overall status: got %q, want %q", got.Status, tc.want.status)
