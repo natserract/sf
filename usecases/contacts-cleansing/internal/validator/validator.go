@@ -2,6 +2,7 @@ package validator
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	truemail "github.com/truemail-rb/truemail-go"
@@ -133,6 +134,7 @@ func stepFromTruemail(result *truemail.ValidatorResult, err error, key string) S
 		return Step{Status: "failed", Reason: reason}
 	}
 	for _, reason := range result.Errors {
+		fmt.Println("Getting Error: ", reason)
 		if reason != "" {
 			return Step{Status: "failed", Reason: reason}
 		}

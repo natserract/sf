@@ -188,6 +188,20 @@ select id::text from runs order by created_at desc limit 1
 	return id, err
 }
 
+func (r *Repo) CountRunsByFilter(ctx context.Context, filterOperator, filterValue string) (int, error) {
+	var total int
+	err := r.pool.QueryRow(ctx, `
+select count(*)
+from runs
+where filter_operator = $1
+  and filter_value = $2
+`, filterOperator, filterValue).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
 func (r *Repo) UpdateContactHasEngagementHistory(ctx context.Context, tx Tx, contactID string, hasEngagementHistory bool) error {
 	_, err := tx.Exec(ctx, `
 update contact_keys set has_engagement_history = $2 where contact_id = $1
@@ -712,14 +726,24 @@ where run_id=$1
 	return
 }
 
-// CountPages returns the number of page rows already seeded for this run,
-// regardless of their status. Used by createRunAndSeedAllPages to avoid
-// inserting duplicate pages when a run already has some pages seeded.
+// CountPages returns the total number of page rows across all runs.
 func (r *Repo) CountPages(ctx context.Context) (int, error) {
 	var count int
 	err := r.pool.QueryRow(ctx, `
 select count(*) from pages
 `).Scan(&count)
+	return count, err
+}
+
+// CountPagesByRun returns the number of page rows already seeded for a run,
+// regardless of their status.
+func (r *Repo) CountPagesByRun(ctx context.Context, runID string) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx, `
+select count(*)
+from pages
+where run_id = $1
+`, runID).Scan(&count)
 	return count, err
 }
 

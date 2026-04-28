@@ -37,3 +37,127 @@ func TestIsNumber(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateEmails runs the full truemail pipeline against a set of addresses
+// and asserts the expected outcome at each step.
+//
+// Syntax-only cases resolve instantly (no network). Domain/MX/SMTP cases will
+// make real DNS / SMTP calls, so they are marked as integration tests and
+// skipped when the -short flag is passed:
+//
+//	go test ./...           – runs everything
+//	go test -short ./...    – skips network cases
+func TestValidateEmails(t *testing.T) {
+	s := NewService()
+
+	type want struct {
+		syntax string
+		domain string
+		mx     string
+		smtp   string
+		status string
+	}
+
+	tests := []struct {
+		name  string
+		email string
+		short bool // skip when -short
+		want  want
+	}{
+		// ── Syntax failures (no network needed) ──────────────────────────────
+		// {
+		// 	name:  "empty string",
+		// 	email: "",
+		// 	want:  want{syntax: "failed", domain: "skipped", mx: "skipped", smtp: "skipped", status: "failed"},
+		// },
+		// {
+		// 	name:  "missing at-sign",
+		// 	email: "notanemail",
+		// 	want:  want{syntax: "failed", domain: "skipped", mx: "skipped", smtp: "skipped", status: "failed"},
+		// },
+		{
+			name:  "Invalid",
+			email: "kufriyadi@gmail.com",
+			want:  want{syntax: "passed", domain: "passed", mx: "passed", smtp: "failed", status: "failed"},
+		},
+		{
+			name:  "gmail valid syntax and domain",
+			email: "alfins132@gmail.com",
+			want:  want{syntax: "passed", domain: "passed", mx: "passed", smtp: "passed", status: "done"},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.short && testing.Short() {
+				t.Skip("skipping network test in -short mode")
+			}
+
+			got := s.Validate(context.Background(), tc.email)
+
+			if got.Syntax.Status != tc.want.syntax {
+				t.Errorf("syntax: got %q, want %q", got.Syntax.Status, tc.want.syntax)
+			}
+			if tc.want.domain != "" && got.Domain.Status != tc.want.domain {
+				t.Errorf("domain: got %q, want %q", got.Domain.Status, tc.want.domain)
+			}
+			if tc.want.mx != "" && got.MX.Status != tc.want.mx {
+				t.Errorf("mx: got %q, want %q", got.MX.Status, tc.want.mx)
+			}
+			if tc.want.smtp != "" && got.SMTP.Status != tc.want.smtp {
+				t.Errorf("smtp: got %q, want %q", got.SMTP.Status, tc.want.smtp)
+			}
+			if tc.want.status != "" && got.Status != tc.want.status {
+				t.Errorf("overall status: got %q, want %q", got.Status, tc.want.status)
+			}
+
+			// Sanity: total score must always be non-negative.
+			if got.Total < 0 {
+				t.Errorf("total score is negative: %d", got.Total)
+			}
+		})
+	}
+}
+
+// TestValidateScoreConsistency verifies that the score fields are populated
+// and that downstream steps are always skipped (never passed) when an earlier
+// step failed – without making any network calls.
+func TestValidateScoreConsistency(t *testing.T) {
+	s := NewService()
+
+	badEmails := []string{
+		"",
+		"notvalid",
+		"missing@",
+		"@nodomain",
+		"double@@at.com",
+	}
+
+	for _, email := range badEmails {
+		t.Run(email, func(t *testing.T) {
+			got := s.Validate(context.Background(), email)
+
+			// When syntax fails every downstream step must be skipped.
+			if got.Syntax.Status == "failed" {
+				for _, step := range []struct {
+					name   string
+					status string
+				}{
+					{"domain", got.Domain.Status},
+					{"mx", got.MX.Status},
+					{"smtp", got.SMTP.Status},
+				} {
+					if step.status != "skipped" {
+						t.Errorf("%s should be skipped after syntax failure, got %q", step.name, step.status)
+					}
+				}
+			}
+
+			// Total score must be a non-negative integer.
+			if got.Total < 0 {
+				t.Errorf("negative total score %d for %q", got.Total, email)
+			}
+		})
+	}
+}

@@ -53,10 +53,32 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
-func (c *Client) FetchPage(ctx context.Context, auth Auth, p FetchPageParams) (Response, *http.Response, error) {
+func (c *Client) FetchAllContactsPage(ctx context.Context, auth Auth, p FetchPageParams) (Response, *http.Response, error) {
 	u, bodyJSON, err := c.buildRequestURLAndBody("/contactsmeta/fuelapi/contacts/v1/addresses/search/channel/", p.PageSize, p.Page, p.OrderBy, map[string]string{
 		"filterConditionOperator": p.FilterConditionOperator,
-		"filterConditionValue":    p.FilterConditionValue,
+	})
+	if err != nil {
+		return Response{}, nil, err
+	}
+	raw, resp, err := c.doJSONRequest(ctx, auth, u, bodyJSON)
+	if err != nil {
+		return Response{}, resp, err
+	}
+	if os.Getenv("API_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "FetchPage raw response: %s\n", string(raw))
+	}
+
+	var out Response
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return Response{}, resp, fmt.Errorf("unmarshal response: %w", err)
+	}
+	return out, resp, nil
+}
+
+func (c *Client) FetchMobileConnectPage(ctx context.Context, auth Auth, p FetchPageParams) (Response, *http.Response, error) {
+	u, bodyJSON, err := c.buildRequestURLAndBody("/contactsmeta/fuelapi/contacts/v1/addresses/search/channel/", p.PageSize, p.Page, p.OrderBy, map[string]string{
+		"filterConditionOperator": "Is",
+		"filterConditionValue":    "MOBILE",
 	})
 	if err != nil {
 		return Response{}, nil, err
@@ -82,7 +104,7 @@ type FetchCountParams struct {
 	OrderBy  string
 }
 
-func (c *Client) FetchCount(ctx context.Context, auth Auth, p FetchCountParams) (CountResponse, *http.Response, error) {
+func (c *Client) FetchAllContactsCount(ctx context.Context, auth Auth, p FetchCountParams) (CountResponse, *http.Response, error) {
 	if p.PageSize <= 0 {
 		p.PageSize = 25
 	}
@@ -103,6 +125,45 @@ func (c *Client) FetchCount(ctx context.Context, auth Auth, p FetchCountParams) 
 	if err != nil {
 		return CountResponse{}, nil, err
 	}
+	raw, resp, err := c.doJSONRequest(ctx, auth, u, bodyJSON)
+	if err != nil {
+		return CountResponse{}, resp, err
+	}
+	var out CountResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return CountResponse{}, resp, fmt.Errorf("unmarshal count response: %w", err)
+	}
+	return out, resp, nil
+}
+
+func (c *Client) FetchMobileConnectCount(ctx context.Context, auth Auth, p FetchCountParams) (CountResponse, *http.Response, error) {
+	if p.PageSize <= 0 {
+		p.PageSize = 25
+	}
+	if p.Page <= 0 {
+		p.Page = 1
+	}
+	if p.OrderBy == "" {
+		p.OrderBy = "contactKey ASC"
+	}
+	u, bodyJSON, err := c.buildRequestURLAndBody("/contactsmeta/fuelapi/contacts/v1/addresses/count/", p.PageSize, p.Page, p.OrderBy, map[string]any{
+		"queryFilter": map[string]any{
+			"hasCriteria": true,
+			"rootExpressionSet": map[string]any{
+				"expressions": []any{
+					map[string]any{
+						"customerDataDefinitionID": 104,
+						"operator":                 "Equal",
+						"values":                   []string{"MOBILE"},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return CountResponse{}, nil, err
+	}
+	fmt.Println("URL: ", u.String())
 	raw, resp, err := c.doJSONRequest(ctx, auth, u, bodyJSON)
 	if err != nil {
 		return CountResponse{}, resp, err
@@ -308,7 +369,7 @@ func (c *Client) PingAuth(ctx context.Context, auth Auth, p PingAuthParams) (*ht
 	if p.OrderBy == "" {
 		p.OrderBy = "contactKey ASC"
 	}
-	_, resp, err := c.FetchPage(ctx, auth, FetchPageParams{
+	_, resp, err := c.FetchAllContactsPage(ctx, auth, FetchPageParams{
 		PageSize:                p.PageSize,
 		Page:                    1,
 		OrderBy:                 p.OrderBy,

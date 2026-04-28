@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -238,87 +237,6 @@ func (p *Processor) Run(ctx context.Context, runID string) error {
 	return g.Wait()
 }
 
-// engagementPool runs up to maxEngagementWorkers goroutines, each pulling from
-// jobCh. Uses its own independent context so a single fetch failure does not
-// cancel unrelated page workers.
-func (p *Processor) engagementPool(ctx context.Context, jobCh <-chan engagementJob) error {
-	g, gctx := errgroup.WithContext(ctx)
-	sem := make(chan struct{}, maxEngagementWorkers)
-
-	for job := range jobCh {
-		job := job
-		select {
-		case sem <- struct{}{}:
-		case <-gctx.Done():
-			return gctx.Err()
-		}
-		g.Go(func() error {
-			defer func() { <-sem }()
-
-			const (
-				maxAttempts    = 4
-				baseTimeout    = 60 * time.Second // raised from 30s — history can be large
-				maxTimeout     = 3 * time.Minute  // cap for later attempts
-				retryBaseDelay = time.Second
-			)
-
-			var history api.MessageHistoryResponse
-			var fetchErr error
-
-			for attempt := 0; attempt < maxAttempts; attempt++ {
-				// Exponential timeout per attempt: 60s, 90s, 135s, 180s (capped).
-				timeout := time.Duration(float64(baseTimeout) * math.Pow(1.5, float64(attempt)))
-				if timeout > maxTimeout {
-					timeout = maxTimeout
-				}
-
-				reqCtx, cancel := context.WithTimeout(ctx, timeout)
-				history, _, fetchErr = p.API.FetchMessageHistory(reqCtx, p.AuthMgr.GetAuth(), job.contact.ContactID)
-				cancel()
-
-				if fetchErr == nil {
-					break
-				}
-
-				isTimeout := errors.Is(fetchErr, context.DeadlineExceeded) || reqCtx.Err() == context.DeadlineExceeded
-				isNetErr := func() bool {
-					var ne net.Error
-					return errors.As(fetchErr, &ne)
-				}()
-
-				if !isTimeout && !isNetErr {
-					// Permanent error (401, 403, 404, JSON parse) — don't retry.
-					log.Printf("[ENGAGEMENT] permanent error contactID=%s attempt=%d err=%v",
-						job.contact.ContactID, attempt+1, fetchErr)
-					break
-				}
-
-				if attempt < maxAttempts-1 {
-					delay := retryBaseDelay * (1 << attempt) // 1s, 2s, 4s
-					log.Printf("[ENGAGEMENT] retryable error contactID=%s attempt=%d/%d timeout=%s retrying in %s err=%v",
-						job.contact.ContactID, attempt+1, maxAttempts, timeout, delay, fetchErr)
-
-					select {
-					case <-ctx.Done():
-						fetchErr = ctx.Err()
-						goto done
-					case <-time.After(delay):
-					}
-				}
-			}
-
-		done:
-			job.resultCh <- engagementResult{
-				contactID:  job.contact.ContactID,
-				hasHistory: fetchErr == nil && len(history.DataSources) > 0,
-				err:        fetchErr,
-			}
-			return nil // pool itself never returns an error; errors flow via resultCh
-		})
-	}
-	return g.Wait()
-}
-
 func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int, attempts int, batchID int64) error {
 	params := api.FetchPageParams{
 		PageSize:                run.PageSize,
@@ -328,7 +246,11 @@ func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int,
 		FilterConditionValue:    run.FilterValue,
 	}
 	usedAuth := p.AuthMgr.GetAuth()
-	resp, httpResp, err := p.API.FetchPage(ctx, usedAuth, params)
+	fetchPage := p.API.FetchAllContactsPage
+	if run.FilterOperator == "Is" && strings.EqualFold(run.FilterValue, "MOBILE") {
+		fetchPage = p.API.FetchMobileConnectPage
+	}
+	resp, httpResp, err := fetchPage(ctx, usedAuth, params)
 	if err != nil {
 		if httpResp != nil && httpResp.StatusCode == http.StatusForbidden {
 			log.Printf("[PROCESS] page=%d got 403, attempting re-auth runID=%s", pageNumber, run.ID)
@@ -336,7 +258,7 @@ func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int,
 				return p.handleProcessError(ctx, run.ID, pageNumber, attempts, httpResp, reauthErr)
 			}
 			log.Printf("[PROCESS] page=%d re-auth succeeded, retrying fetch runID=%s", pageNumber, run.ID)
-			resp, httpResp, err = p.API.FetchPage(ctx, p.AuthMgr.GetAuth(), params)
+			resp, httpResp, err = fetchPage(ctx, p.AuthMgr.GetAuth(), params)
 		}
 	}
 	if err != nil {
