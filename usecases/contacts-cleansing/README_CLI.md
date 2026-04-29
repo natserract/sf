@@ -52,6 +52,22 @@ make docker-up
 
 ## Commands
 
+### Validate All SMFC CSV (durable, no auth)
+
+Validates `SubscriberKey__c` from `data/smfc_all_contact_nofilter.csv` and writes results to:
+- `validation_runs`
+- `validation_results`
+
+```bash
+go run . validate
+```
+
+Behavior:
+- no bearer/csrf/cookie required
+- uses `DB_DSN` only
+- automatically resumes latest unfinished run for the same source file
+- if no unfinished run exists, creates a new run
+
 ### Fetch Everything (default, no run id needed)
 
 ```bash
@@ -115,6 +131,14 @@ go run . resume --run-id <uuid> \
 - Start worker command again with same `--run-id`.
 - Remaining pending pages and retry pages continue.
 - Stale in-progress jobs are reaped back to pending using `LOCK_TIMEOUT_SECONDS`.
+
+### CSV validation resume (`validate-all-smfc`)
+
+- If process exits during validation, run `go run . validate-all-smfc` again.
+- Command reuses latest unfinished run for `data/smfc_all_contact_nofilter.csv`.
+- Any `validation_results` left as `in_progress` are re-queued to `pending`.
+- Processing continues from pending rows; completed rows are not duplicated.
+- Run is marked `completed` only when no `pending`/`in_progress` rows remain.
 
 ## Auth Failure Behavior
 

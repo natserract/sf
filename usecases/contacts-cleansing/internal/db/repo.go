@@ -114,6 +114,15 @@ type RunProgress struct {
 	LastUpdated string `json:"lastUpdated"`
 }
 
+type ValidationRunProgress struct {
+	TotalRows   int
+	Pending     int64
+	InProgress  int64
+	Done        int64
+	Failed      int64
+	LastUpdated string
+}
+
 type Repo struct {
 	pool *pgxpool.Pool
 }
@@ -938,6 +947,72 @@ returning id::text
 	return id, err
 }
 
+func (r *Repo) FindLatestUnfinishedValidationRunBySource(ctx context.Context, sourceFile string) (string, error) {
+	var runID string
+	err := r.pool.QueryRow(ctx, `
+select vr.id::text
+from validation_runs vr
+where vr.source_file = $1
+  and vr.state <> 'completed'
+  and exists (
+    select 1
+    from validation_results r
+    where r.run_id = vr.id
+      and r.status in ('pending', 'in_progress')
+  )
+order by vr.created_at desc
+limit 1
+`, sourceFile).Scan(&runID)
+	if err == pgx.ErrNoRows {
+		return "", nil
+	}
+	return runID, err
+}
+
+func (r *Repo) UpdateValidationRunTotalRows(ctx context.Context, runID string, totalRows int) error {
+	_, err := r.pool.Exec(ctx, `
+update validation_runs
+set total_rows = $2
+where id = $1
+`, runID, totalRows)
+	return err
+}
+
+func (r *Repo) ReopenValidationRun(ctx context.Context, runID string) error {
+	_, err := r.pool.Exec(ctx, `
+update validation_runs
+set state = 'running',
+    completed_at = null
+where id = $1
+`, runID)
+	return err
+}
+
+func (r *Repo) MarkValidationRunFailed(ctx context.Context, runID, reason string) error {
+	_ = reason
+	_, err := r.pool.Exec(ctx, `
+update validation_runs
+set state='failed',
+    completed_at=now()
+where id = $1
+`, runID)
+	return err
+}
+
+func (r *Repo) RequeueValidationInProgress(ctx context.Context, runID string) (int64, error) {
+	ct, err := r.pool.Exec(ctx, `
+update validation_results
+set status = 'pending',
+    updated_at = now()
+where run_id = $1
+  and status = 'in_progress'
+`, runID)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
+}
+
 func (r *Repo) CreateValidationResults(ctx context.Context, runID string, rows []CreateValidationResultInput) error {
 	if len(rows) == 0 {
 		return nil
@@ -1014,6 +1089,24 @@ where id = $1
 		return false, err
 	}
 	return ct.RowsAffected() > 0, nil
+}
+
+func (r *Repo) GetValidationRunProgress(ctx context.Context, runID string) (ValidationRunProgress, error) {
+	var out ValidationRunProgress
+	err := r.pool.QueryRow(ctx, `
+select
+  vr.total_rows,
+  count(*) filter (where r.status='pending') as pending,
+  count(*) filter (where r.status='in_progress') as in_progress,
+  count(*) filter (where r.status='done') as done,
+  count(*) filter (where r.status='failed') as failed,
+  to_char(coalesce(max(r.updated_at), now()), 'YYYY-MM-DD"T"HH24:MI:SSOF')
+from validation_runs vr
+left join validation_results r on r.run_id = vr.id
+where vr.id = $1
+group by vr.total_rows
+`, runID).Scan(&out.TotalRows, &out.Pending, &out.InProgress, &out.Done, &out.Failed, &out.LastUpdated)
+	return out, err
 }
 
 func (r *Repo) ListResults(ctx context.Context, runID string, offset int, limit int, q string) ([]ValidationRow, int64, error) {
@@ -1263,4 +1356,150 @@ returning vr.id, vr.run_id::text, vr.row_number, vr.contact_id, vr.raw_contact_k
 		return nil, err
 	}
 	return &row, nil
+}
+
+func (r *Repo) ClaimPendingValidationResults(ctx context.Context, runID string, limit int) ([]ValidationRow, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	rows, err := r.pool.Query(ctx, `
+with candidate as (
+  select id
+  from validation_results
+  where run_id = $1 and status = 'pending'
+  order by row_number
+  for update skip locked
+  limit $2
+)
+update validation_results vr
+set status='in_progress',
+    updated_at=now()
+from candidate c
+where vr.id = c.id
+returning vr.id, vr.run_id::text, vr.row_number, vr.contact_id, vr.raw_contact_key
+`, runID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]ValidationRow, 0, limit)
+	for rows.Next() {
+		var row ValidationRow
+		if err := rows.Scan(&row.ID, &row.RunID, &row.RowNumber, &row.ContactID, &row.RawContactKey); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) BulkUpdateValidationByID(ctx context.Context, updates []ValidationUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("BulkUpdateValidationByID: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `
+CREATE TEMP TABLE _val_batch_by_id (
+    id                    bigint NOT NULL,
+    status                text NOT NULL,
+    failure_reason        text NOT NULL DEFAULT '',
+    clean_candidate       text NOT NULL DEFAULT '',
+    normalized_email      text NOT NULL DEFAULT '',
+    syntax_status         text NOT NULL DEFAULT '',
+    syntax_reason         text NOT NULL DEFAULT '',
+    syntax_latency_ms     int  NOT NULL DEFAULT 0,
+    syntax_score          int  NOT NULL DEFAULT 0,
+    domain_dns_status     text NOT NULL DEFAULT '',
+    domain_dns_reason     text NOT NULL DEFAULT '',
+    domain_dns_latency_ms int  NOT NULL DEFAULT 0,
+    domain_dns_score      int  NOT NULL DEFAULT 0,
+    mx_status             text NOT NULL DEFAULT '',
+    mx_reason             text NOT NULL DEFAULT '',
+    mx_latency_ms         int  NOT NULL DEFAULT 0,
+    mx_score              int  NOT NULL DEFAULT 0,
+    smtp_status           text NOT NULL DEFAULT '',
+    smtp_reason           text NOT NULL DEFAULT '',
+    smtp_latency_ms       int  NOT NULL DEFAULT 0,
+    smtp_score            int  NOT NULL DEFAULT 0,
+    history_status        text NOT NULL DEFAULT '',
+    history_reason        text NOT NULL DEFAULT '',
+    history_score         int  NOT NULL DEFAULT 0,
+    total_score           int  NOT NULL DEFAULT 0
+) ON COMMIT DROP
+`); err != nil {
+		return fmt.Errorf("BulkUpdateValidationByID: create temp table: %w", err)
+	}
+
+	vals := make([][]any, len(updates))
+	for i, u := range updates {
+		vals[i] = []any{
+			u.ID, u.Status, u.FailureReason, u.CleanCandidate, u.NormalizedEmail,
+			u.SyntaxStatus, u.SyntaxReason, u.SyntaxLatencyMS, u.SyntaxScore,
+			u.DomainDNSStatus, u.DomainDNSReason, u.DomainLatencyMS, u.DomainScore,
+			u.MXStatus, u.MXReason, u.MXLatencyMS, u.MXScore,
+			u.SMTPStatus, u.SMTPReason, u.SMTPLatencyMS, u.SMTPScore,
+			u.HistoryStatus, u.HistoryReason, u.HistoryScore, u.TotalScore,
+		}
+	}
+
+	if _, err := tx.CopyFrom(
+		ctx,
+		pgx.Identifier{"_val_batch_by_id"},
+		[]string{
+			"id", "status", "failure_reason", "clean_candidate", "normalized_email",
+			"syntax_status", "syntax_reason", "syntax_latency_ms", "syntax_score",
+			"domain_dns_status", "domain_dns_reason", "domain_dns_latency_ms", "domain_dns_score",
+			"mx_status", "mx_reason", "mx_latency_ms", "mx_score",
+			"smtp_status", "smtp_reason", "smtp_latency_ms", "smtp_score",
+			"history_status", "history_reason", "history_score", "total_score",
+		},
+		pgx.CopyFromRows(vals),
+	); err != nil {
+		return fmt.Errorf("BulkUpdateValidationByID: copy rows: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+UPDATE validation_results vr
+SET    status                = b.status,
+       failure_reason        = b.failure_reason,
+       clean_candidate       = b.clean_candidate,
+       normalized_email      = b.normalized_email,
+       syntax_status         = b.syntax_status,
+       syntax_reason         = b.syntax_reason,
+       syntax_latency_ms     = b.syntax_latency_ms,
+       syntax_score          = b.syntax_score,
+       domain_dns_status     = b.domain_dns_status,
+       domain_dns_reason     = b.domain_dns_reason,
+       domain_dns_latency_ms = b.domain_dns_latency_ms,
+       domain_dns_score      = b.domain_dns_score,
+       mx_status             = b.mx_status,
+       mx_reason             = b.mx_reason,
+       mx_latency_ms         = b.mx_latency_ms,
+       mx_score              = b.mx_score,
+       smtp_status           = b.smtp_status,
+       smtp_reason           = b.smtp_reason,
+       smtp_latency_ms       = b.smtp_latency_ms,
+       smtp_score            = b.smtp_score,
+       history_status        = b.history_status,
+       history_reason        = b.history_reason,
+       history_score         = b.history_score,
+       total_score           = b.total_score,
+       updated_at            = now()
+FROM   _val_batch_by_id b
+WHERE  vr.id = b.id
+`); err != nil {
+		return fmt.Errorf("BulkUpdateValidationByID: apply updates: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("BulkUpdateValidationByID: commit: %w", err)
+	}
+	return nil
 }

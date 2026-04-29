@@ -8,6 +8,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/joho/godotenv"
@@ -20,6 +24,19 @@ import (
 	"sf/usecases/mail-checker/internal/runner"
 	"sf/usecases/mail-checker/internal/validator"
 )
+
+var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+func sanitizeAndValidateRunID(runID string) (string, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return "", nil
+	}
+	if !uuidPattern.MatchString(runID) {
+		return "", fmt.Errorf("--run-id must be a valid UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx), got %q", runID)
+	}
+	return runID, nil
+}
 
 func main() {
 	_ = godotenv.Load()
@@ -107,6 +124,13 @@ func main() {
 		}
 		return cfg, nil
 	}))
+	root.AddCommand(newValidateAllSMFCCmd(func() (config.Config, error) {
+		cfg, err := config.FromEnvFull()
+		if err != nil {
+			return config.Config{}, err
+		}
+		return cfg, nil
+	}))
 
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
@@ -120,6 +144,62 @@ func main() {
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
+	}
+}
+
+func newValidateAllSMFCCmd(build func() (config.Config, error)) *cobra.Command {
+	return &cobra.Command{
+		Use:   "validate",
+		Short: "Validate all SubscriberKey__c rows from local SMFC CSV into validation tables",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := build()
+			if err != nil {
+				return err
+			}
+			if cfg.DBDSN == "" {
+				return fmt.Errorf("DB_DSN is required")
+			}
+
+			sourcePath := filepath.Join("data", "smfc_all_contact_nofilter.csv")
+			if _, err := os.Stat(sourcePath); err != nil {
+				return fmt.Errorf("source csv not found at %s: %w", sourcePath, err)
+			}
+
+			pool, err := db.Open(cmd.Context(), cfg.DBDSN)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+
+			if err := db.ApplyMigrations(cmd.Context(), pool); err != nil {
+				return err
+			}
+
+			repo := db.NewRepo(pool)
+			validatorSvc := validator.NewService()
+			processor := &runner.CSVValidationProcessor{
+				Repo:      repo,
+				Validator: validatorSvc,
+				Source:    sourcePath,
+				Options: runner.CSVValidationOptions{
+					SeedBatchSize:   10000,
+					ClaimBatchSize:  1000,
+					UpdateBatchSize: 1000,
+					WorkerCount:     max(8, runtime.NumCPU()*2),
+				},
+			}
+
+			runID, resumed, err := processor.Run(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if resumed {
+				fmt.Fprintf(cmd.OutOrStdout(), "validation run resumed and completed run_id=%s\n", runID)
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "validation run completed run_id=%s\n", runID)
+			}
+			return nil
+		},
 	}
 }
 
@@ -393,6 +473,11 @@ func newWorkerCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 					return err
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "auto-created run_id=%s total_count=%d total_pages=%d seeded_rows=%d started_page=1\n", runID, totalCount, totalPages, seededRows)
+			} else {
+				runID, err = sanitizeAndValidateRunID(runID)
+				if err != nil {
+					return err
+				}
 			}
 			workerID := fmt.Sprintf("%d-%d", os.Getpid(), rand.Int())
 			proc := &runner.Processor{
@@ -483,6 +568,10 @@ func newResumeCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 			}
 			if runID == "" {
 				return fmt.Errorf("--run-id is required")
+			}
+			runID, err = sanitizeAndValidateRunID(runID)
+			if err != nil {
+				return err
 			}
 			if auth.BearerToken == "" || auth.CsrfToken == "" || auth.Cookie == "" {
 				return fmt.Errorf("--bearer-token, --csrf-token, and --cookie are required for resume")
@@ -782,6 +871,10 @@ func newStatusCmd(build func() (config.Config, error)) *cobra.Command {
 			}
 			if runID == "" {
 				return fmt.Errorf("--run-id is required")
+			}
+			runID, err = sanitizeAndValidateRunID(runID)
+			if err != nil {
+				return err
 			}
 
 			pool, err := db.Open(cmd.Context(), cfg.DBDSN)
