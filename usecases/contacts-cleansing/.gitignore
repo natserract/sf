@@ -2,3 +2,4 @@ all_contacts.csv
 curl.bash
 credentials.json
 data/*.csv
+smfc-validate

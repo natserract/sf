@@ -6,3 +6,15 @@ docker-reset:
 
 test:
 	go test ./...
+
+.PHONY: build-validate release-validate-all
+
+build-validate:
+	mkdir -p dist
+	go build -o dist/smfc-validate ./cmd/smfc-validate
+
+release-validate-all:
+	mkdir -p dist
+	GOOS=darwin GOARCH=arm64 go build -o dist/smfc-validate-darwin-arm64 ./cmd/smfc-validate
+	GOOS=darwin GOARCH=amd64 go build -o dist/smfc-validate-darwin-amd64 ./cmd/smfc-validate
+	GOOS=windows GOARCH=amd64 go build -o dist/smfc-validate-windows-amd64.exe ./cmd/smfc-validate

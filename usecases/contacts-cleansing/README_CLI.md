@@ -62,6 +62,45 @@ Validates `SubscriberKey__c` from `data/smfc_all_contact_nofilter.csv` and write
 go run . validate
 ```
 
+Optional CSV path (otherwise uses `data/smfc_all_contact_nofilter.csv` relative to the current working directory):
+
+```bash
+go run . validate --csv /path/to/smfc_all_contact_nofilter.csv
+```
+
+#### Validate-only binary (`smfc-validate`)
+
+For machines that only need validation (no fetch/worker commands), build a standalone binary from this directory:
+
+```bash
+go build -o smfc-validate ./cmd/smfc-validate
+```
+
+Cross-compile examples (run from `usecases/contacts-cleansing`):
+
+```bash
+GOOS=darwin GOARCH=arm64 go build -o smfc-validate-darwin-arm64 ./cmd/smfc-validate
+GOOS=darwin GOARCH=amd64 go build -o smfc-validate-darwin-amd64 ./cmd/smfc-validate
+GOOS=windows GOARCH=amd64 go build -o smfc-validate.exe ./cmd/smfc-validate
+```
+
+Or use Make targets that write to `dist/`:
+
+```bash
+make build-validate
+make release-validate-all
+```
+
+Usage matches `validate`: load `.env` (via `godotenv`), require `DB_DSN`, same CSV default. Flags:
+
+- `-csv` — absolute or relative path to the SMFC CSV (recommended on Windows if the binary is not started from the project root)
+- `-version` — print version and exit
+
+```bash
+./smfc-validate
+./smfc-validate -csv C:\data\smfc_all_contact_nofilter.csv
+```
+
 Behavior:
 - no bearer/csrf/cookie required
 - uses `DB_DSN` only
@@ -176,6 +215,11 @@ Validation engine is powered by [`truemail-go`](https://github.com/truemail-rb/t
 
 ```bash
 go run . web --addr :8080 --workers 20
+```
+
+### Run validation
+```bash
+./smfc-validate
 ```
 
 Open `http://localhost:8080/static/index.html`.

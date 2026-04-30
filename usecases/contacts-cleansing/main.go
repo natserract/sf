@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"syscall"
 
@@ -22,6 +21,7 @@ import (
 	"sf/usecases/mail-checker/internal/config"
 	"sf/usecases/mail-checker/internal/db"
 	"sf/usecases/mail-checker/internal/runner"
+	"sf/usecases/mail-checker/internal/smfcvalidate"
 	"sf/usecases/mail-checker/internal/validator"
 )
 
@@ -148,7 +148,8 @@ func main() {
 }
 
 func newValidateAllSMFCCmd(build func() (config.Config, error)) *cobra.Command {
-	return &cobra.Command{
+	var csvPath string
+	cmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Validate all SubscriberKey__c rows from local SMFC CSV into validation tables",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -156,51 +157,15 @@ func newValidateAllSMFCCmd(build func() (config.Config, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if cfg.DBDSN == "" {
-				return fmt.Errorf("DB_DSN is required")
+			sourcePath := csvPath
+			if sourcePath == "" {
+				sourcePath = filepath.Join("data", "smfc_all_contact_nofilter.csv")
 			}
-
-			sourcePath := filepath.Join("data", "smfc_all_contact_nofilter.csv")
-			if _, err := os.Stat(sourcePath); err != nil {
-				return fmt.Errorf("source csv not found at %s: %w", sourcePath, err)
-			}
-
-			pool, err := db.Open(cmd.Context(), cfg.DBDSN)
-			if err != nil {
-				return err
-			}
-			defer pool.Close()
-
-			if err := db.ApplyMigrations(cmd.Context(), pool); err != nil {
-				return err
-			}
-
-			repo := db.NewRepo(pool)
-			validatorSvc := validator.NewService()
-			processor := &runner.CSVValidationProcessor{
-				Repo:      repo,
-				Validator: validatorSvc,
-				Source:    sourcePath,
-				Options: runner.CSVValidationOptions{
-					SeedBatchSize:   10000,
-					ClaimBatchSize:  1000,
-					UpdateBatchSize: 1000,
-					WorkerCount:     max(8, runtime.NumCPU()*2),
-				},
-			}
-
-			runID, resumed, err := processor.Run(cmd.Context())
-			if err != nil {
-				return err
-			}
-			if resumed {
-				fmt.Fprintf(cmd.OutOrStdout(), "validation run resumed and completed run_id=%s\n", runID)
-			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "validation run completed run_id=%s\n", runID)
-			}
-			return nil
+			return smfcvalidate.Run(cmd.Context(), cfg, sourcePath, cmd.OutOrStdout())
 		},
 	}
+	cmd.Flags().StringVar(&csvPath, "csv", "", "path to SMFC CSV (default: data/smfc_all_contact_nofilter.csv relative to cwd)")
+	return cmd
 }
 
 func newRestAPICmd(build func() (config.Config, error)) *cobra.Command {
