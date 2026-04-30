@@ -1,0 +1,4 @@
+curl-jb.bash
+curl-mc.bash
+dist/
+output/
