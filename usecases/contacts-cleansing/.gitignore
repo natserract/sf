@@ -3,3 +3,4 @@ curl.bash
 credentials.json
 data/*.csv
 smfc-validate
+dist/
