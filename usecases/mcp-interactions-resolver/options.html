@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SF Proxy – Options</title>
+  <style>
+    body {
+      max-width: 560px;
+      padding: 24px;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      font-weight: 600;
+    }
+    p.hint {
+      margin: 0 0 16px;
+      color: #5f6368;
+      font-size: 13px;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+    input[type="url"],
+    input[type="text"] {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #dadce0;
+      border-radius: 6px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    input:focus {
+      outline: none;
+      border-color: #1a73e8;
+      box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+    }
+    .save-row {
+      margin-top: 16px;
+    }
+    button {
+      padding: 10px 20px;
+      background: #1a73e8;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #1557b0;
+    }
+    .message {
+      margin-top: 12px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      display: none;
+    }
+    .message.success {
+      background: #e6f4ea;
+      color: #137333;
+    }
+    .message.error {
+      background: #fce8e6;
+      color: #c5221f;
+    }
+  </style>
+</head>
+<body>
+  <h1>SF Proxy – Options</h1>
+  <p class="hint">Enter your Cloudflare-hosted PAC file URL. Example: <code>https://pac.cloudflare-gateway.com/&lt;ACCOUNT_ID&gt;/&lt;SLUG&gt;</code></p>
+  <label for="pacUrl">PAC URL</label>
+  <input type="url" id="pacUrl" placeholder="https://pac.cloudflare-gateway.com/..." autocomplete="off">
+  <div class="save-row">
+    <button type="button" id="btnSave">Save</button>
+  </div>
+  <div id="message" class="message"></div>
+  <script src="options.js"></script>
+</body>
+</html>
