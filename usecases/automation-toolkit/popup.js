@@ -8,9 +8,19 @@ const pickElementButtonEl = document.getElementById('pickElementButton');
 const pickerPreviewEl = document.getElementById('pickerPreview');
 const insertTextStepButtonEl = document.getElementById('insertTextStepButton');
 const insertScreenshotStepButtonEl = document.getElementById('insertScreenshotStepButton');
+const progressTaskTextEl = document.getElementById('progressTaskText');
+const progressStepTextEl = document.getElementById('progressStepText');
+const progressBarFillEl = document.getElementById('progressBarFill');
+const progressStateTextEl = document.getElementById('progressStateText');
 
 let pickedElementPayload = null;
 const TBRG_DEBUG_MODE_STORAGE_KEY = 'tbrg.debugModeEnabled';
+let latestProgress = {
+  completedTasks: 0,
+  totalTasks: 0,
+  completedSteps: 0,
+  totalSteps: 0
+};
 
 function setStatus(message, tone) {
   statusBoxEl.textContent = message;
@@ -18,6 +28,37 @@ function setStatus(message, tone) {
   if (tone) {
     statusBoxEl.classList.add(tone);
   }
+}
+
+function tbrgSafeNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+function updateProgressUi(progress, stateText) {
+  latestProgress = {
+    completedTasks: tbrgSafeNumber(progress?.completedTasks),
+    totalTasks: tbrgSafeNumber(progress?.totalTasks),
+    completedSteps: tbrgSafeNumber(progress?.completedSteps),
+    totalSteps: tbrgSafeNumber(progress?.totalSteps)
+  };
+
+  progressTaskTextEl.textContent = `Tasks: ${latestProgress.completedTasks}/${latestProgress.totalTasks}`;
+  progressStepTextEl.textContent = `Steps: ${latestProgress.completedSteps}/${latestProgress.totalSteps}`;
+
+  const denominator = latestProgress.totalSteps;
+  const numerator = latestProgress.completedSteps;
+  const percent = denominator > 0 ? Math.max(0, Math.min(100, Math.round((numerator / denominator) * 100))) : 0;
+  progressBarFillEl.style.width = `${percent}%`;
+
+  const isDone = latestProgress.totalTasks > 0 && latestProgress.completedTasks >= latestProgress.totalTasks;
+  progressBarFillEl.classList.toggle('done', isDone);
+  progressStateTextEl.textContent = stateText || (isDone ? 'Finished.' : 'Running...');
+}
+
+function setIdleProgressUi() {
+  updateProgressUi({ completedTasks: 0, totalTasks: 0, completedSteps: 0, totalSteps: 0 }, 'Idle.');
+  progressBarFillEl.classList.remove('done');
 }
 
 function sendMessage(message, timeoutMs = 90000) {
@@ -113,12 +154,25 @@ function buildStepSnippet(stepType) {
   }
 
   const baseId = slugifyStepId(pickedElementPayload.textSample || pickedElementPayload.tagName || 'picked');
-  const step = {
-    id: `${baseId}_${stepType === 'screenshot' ? 'shot' : 'text'}`,
-    type: stepType,
-    selector: pickedElementPayload.selector,
-    timeoutMs: 60000
-  };
+  let step;
+  if (stepType === 'image') {
+    step = {
+      id: `${baseId}_image`,
+      type: 'image',
+      operator: 'capture',
+      selector: pickedElementPayload.selector,
+      timeoutMs: 60000
+    };
+  } else if (stepType === 'waitFor') {
+    step = {
+      type: 'waitFor',
+      operator: 'exists',
+      selector: pickedElementPayload.selector,
+      timeoutMs: 60000
+    };
+  } else {
+    throw new Error(`Unsupported snippet type: ${stepType}`);
+  }
 
   if (Number(pickedElementPayload.matchIndex) > 0) {
     step.matchIndex = Number(pickedElementPayload.matchIndex);
@@ -202,13 +256,14 @@ function insertStepFromPick(stepType) {
 async function runReport() {
   const selectedTemplateId = templateSelectEl.value;
   setStatus('Starting report run...');
+  updateProgressUi({ completedTasks: 0, totalTasks: 0, completedSteps: 0, totalSteps: 0 }, 'Starting...');
   runButtonEl.disabled = true;
 
   try {
     const response = await sendMessage({
       type: 'TBRG_START_JOB',
       templateId: selectedTemplateId
-    });
+    }, 15 * 60 * 1000);
 
     if (!response.ok) {
       throw new Error(response.error || 'Report run failed.');
@@ -227,17 +282,60 @@ async function runReport() {
     ].filter(Boolean);
 
     setStatus(lines.join('\n'), 'success');
+    updateProgressUi({
+      completedTasks: latestProgress.completedTasks,
+      totalTasks: latestProgress.totalTasks,
+      completedSteps: latestProgress.completedSteps,
+      totalSteps: latestProgress.totalSteps
+    }, 'Finished.');
+    progressBarFillEl.classList.add('done');
   } catch (error) {
     setStatus(error.message || 'Report run failed.', 'error');
+    progressStateTextEl.textContent = 'Failed.';
   } finally {
     runButtonEl.disabled = false;
   }
 }
 
 async function runReportWithProgress() {
-  setStatus('Starting report run...\nNavigating and extracting...');
+  setStatus('Starting report run...\nTracking progress...');
   await runReport();
 }
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type !== 'TBRG_JOB_PROGRESS') {
+    return;
+  }
+  const taskSummary = `Tasks: ${tbrgSafeNumber(message.completedTasks)}/${tbrgSafeNumber(message.totalTasks)}`;
+  const stepSummary = `Steps: ${tbrgSafeNumber(message.completedSteps)}/${tbrgSafeNumber(message.totalSteps)}`;
+  const detail = message.lastCompletedStepId ? `Last step: ${message.lastCompletedStepId}` : '';
+
+  if (message.stage === 'started') {
+    updateProgressUi(message, 'Started...');
+    setStatus(`Report started.\n${taskSummary}\n${stepSummary}`);
+    return;
+  }
+
+  if (message.stage === 'running') {
+    const taskLine = message.currentTaskName
+      ? `Current task: ${message.currentTaskName}`
+      : (message.currentTaskId ? `Current task: ${message.currentTaskId}` : '');
+    updateProgressUi(message, 'Running...');
+    setStatus([taskSummary, stepSummary, taskLine, detail].filter(Boolean).join('\n'));
+    return;
+  }
+
+  if (message.stage === 'finished') {
+    updateProgressUi(message, 'Finished.');
+    progressBarFillEl.classList.add('done');
+    return;
+  }
+
+  if (message.stage === 'error') {
+    progressStateTextEl.textContent = 'Failed.';
+    setStatus(message.error || 'Report run failed.', 'error');
+  }
+});
 
 templateSelectEl.addEventListener('change', async () => {
   try {
@@ -253,11 +351,12 @@ templateSelectEl.addEventListener('change', async () => {
 debugModeToggleEl.addEventListener('change', () => setDebugModeEnabled(debugModeToggleEl.checked));
 
 pickElementButtonEl.addEventListener('click', pickElementFromPage);
-insertTextStepButtonEl.addEventListener('click', () => insertStepFromPick('text'));
-insertScreenshotStepButtonEl.addEventListener('click', () => insertStepFromPick('screenshot'));
+insertTextStepButtonEl.addEventListener('click', () => insertStepFromPick('waitFor'));
+insertScreenshotStepButtonEl.addEventListener('click', () => insertStepFromPick('image'));
 runButtonEl.addEventListener('click', runReportWithProgress);
 
 setPickedElement(null);
+setIdleProgressUi();
 
 loadTemplates().catch((error) => {
   setStatus(error.message || 'Failed to initialize popup.', 'error');

@@ -1,8 +1,10 @@
 const TBRG_CUSTOM_TEMPLATE_STORAGE_KEY = 'tbrg.customTemplateText';
 const TBRG_SELECTED_TEMPLATE_STORAGE_KEY = 'tbrg.selectedTemplateId';
 const TBRG_BUNDLED_TEMPLATE_FILES = [
-  'templates/default-sales.json'
+  'templates/default-kit/default-sales.json'
 ];
+
+const TBRG_ALLOWED_STEP_TYPES = new Set(['text', 'csv', 'waitFor', 'image', 'dom']);
 
 async function tbrgFetchText(relativePath) {
   const response = await fetch(chrome.runtime.getURL(relativePath), { cache: 'no-store' });
@@ -10,6 +12,208 @@ async function tbrgFetchText(relativePath) {
     throw new Error(`Failed to load template asset: ${relativePath}`);
   }
   return response.text();
+}
+
+function tbrgValidateStep(step, templateId, source, path) {
+  if (!step || typeof step !== 'object') {
+    throw new Error(`Template "${templateId}" has invalid step at ${path} in ${source}.`);
+  }
+  const type = step.type;
+  if (typeof type !== 'string' || !type.trim()) {
+    throw new Error(`Template "${templateId}" step at ${path} is missing a "type" string in ${source}.`);
+  }
+  if (!TBRG_ALLOWED_STEP_TYPES.has(type)) {
+    throw new Error(`Template "${templateId}" has unsupported step type "${type}" at ${path} in ${source}.`);
+  }
+
+  const operator = typeof step.operator === 'string' ? step.operator.trim() : '';
+  if (!operator) {
+    throw new Error(`Template "${templateId}" step "${step.id || path}" must include an "operator" string in ${source}.`);
+  }
+  const stepValue = typeof step.value === 'string' ? step.value.trim() : '';
+
+  if (type !== 'waitFor' && (typeof step.id !== 'string' || !step.id.trim())) {
+    throw new Error(`Template "${templateId}" step type "${type}" at ${path} requires an "id" string in ${source}.`);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(step, 'label') && typeof step.label !== 'string') {
+    throw new Error(`Template "${templateId}" step "${step.id || path}" has non-string "label" at ${path} in ${source}.`);
+  }
+  if (Object.prototype.hasOwnProperty.call(step, 'helpText') && typeof step.helpText !== 'string') {
+    throw new Error(`Template "${templateId}" step "${step.id || path}" has non-string "helpText" at ${path} in ${source}.`);
+  }
+
+  if (type === 'waitFor') {
+    if (operator !== 'exists') {
+      throw new Error(`Template "${templateId}" step "${step.id || path}" waitFor supports only operator "exists" in ${source}.`);
+    }
+    if (typeof step.selector !== 'string' || !step.selector.trim()) {
+      throw new Error(`Template "${templateId}" waitFor.exists step "${step.id || path}" requires "selector" in ${source}.`);
+    }
+    if (Object.prototype.hasOwnProperty.call(step, 'requireVisible') && typeof step.requireVisible !== 'boolean') {
+      throw new Error(`Template "${templateId}" waitFor.exists step "${step.id || path}" has non-boolean "requireVisible" in ${source}.`);
+    }
+    if (Object.prototype.hasOwnProperty.call(step, 'value')) {
+      throw new Error(`Template "${templateId}" waitFor.exists step "${step.id || path}" must not define "value" in ${source}.`);
+    }
+  }
+
+  if (type === 'text') {
+    if (operator !== 'input') {
+      throw new Error(`Template "${templateId}" step "${step.id}" text supports only operator "input" in ${source}.`);
+    }
+    if (!stepValue) {
+      throw new Error(`Template "${templateId}" step "${step.id}" requires non-empty "value" in ${source}.`);
+    }
+    if (Object.prototype.hasOwnProperty.call(step, 'multiline') && typeof step.multiline !== 'boolean') {
+      throw new Error(`Template "${templateId}" step "${step.id}" has non-boolean "multiline" in ${source}.`);
+    }
+    if (Object.prototype.hasOwnProperty.call(step, 'placeholder') && typeof step.placeholder !== 'string') {
+      throw new Error(`Template "${templateId}" step "${step.id}" has non-string "placeholder" in ${source}.`);
+    }
+    if (Object.prototype.hasOwnProperty.call(step, 'default') && typeof step.default !== 'string') {
+      throw new Error(`Template "${templateId}" step "${step.id}" has non-string "default" in ${source}.`);
+    }
+  }
+
+  if (type === 'csv') {
+    if (operator !== 'input' && operator !== 'aggregate') {
+      throw new Error(`Template "${templateId}" step "${step.id}" csv supports operators "input" and "aggregate" in ${source}.`);
+    }
+
+    if (operator === 'input') {
+      if (!stepValue) {
+        throw new Error(`Template "${templateId}" step "${step.id}" requires non-empty "value" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'delimiter') && typeof step.delimiter !== 'string') {
+        throw new Error(`Template "${templateId}" step "${step.id}" has non-string "delimiter" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'hasHeader') && typeof step.hasHeader !== 'boolean') {
+        throw new Error(`Template "${templateId}" step "${step.id}" has non-boolean "hasHeader" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'maxRows') && !(Number.isFinite(Number(step.maxRows)) && Number(step.maxRows) >= 1)) {
+        throw new Error(`Template "${templateId}" step "${step.id}" has invalid "maxRows" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'maxBytes') && !(Number.isFinite(Number(step.maxBytes)) && Number(step.maxBytes) >= 1)) {
+        throw new Error(`Template "${templateId}" step "${step.id}" has invalid "maxBytes" in ${source}.`);
+      }
+    }
+
+    if (operator === 'aggregate') {
+      if (!stepValue) {
+        throw new Error(`Template "${templateId}" step "${step.id}" requires non-empty "value" in ${source}.`);
+      }
+      if (typeof step.sourceValue !== 'string' || !step.sourceValue.trim()) {
+        throw new Error(`Template "${templateId}" csv.aggregate step "${step.id}" requires "sourceValue" in ${source}.`);
+      }
+      if (typeof step.aggregateType !== 'string' || !step.aggregateType.trim()) {
+        throw new Error(`Template "${templateId}" csv.aggregate step "${step.id}" requires "aggregateType" in ${source}.`);
+      }
+      if (step.aggregateType !== 'sum') {
+        throw new Error(`Template "${templateId}" csv.aggregate step "${step.id}" currently supports aggregateType "sum" only in ${source}.`);
+      }
+      if (typeof step.column !== 'string' || !step.column.trim()) {
+        throw new Error(`Template "${templateId}" csv.aggregate step "${step.id}" requires "column" in ${source}.`);
+      }
+    }
+  }
+
+  if (type === 'dom') {
+    if (operator !== 'readText') {
+      throw new Error(`Template "${templateId}" step "${step.id}" dom supports only operator "readText" in ${source}.`);
+    }
+    if (!stepValue) {
+      throw new Error(`Template "${templateId}" step "${step.id}" requires non-empty "value" in ${source}.`);
+    }
+    if (typeof step.selector !== 'string' || !step.selector.trim()) {
+      throw new Error(`Template "${templateId}" dom.readText step "${step.id}" requires "selector" in ${source}.`);
+    }
+    if (Object.prototype.hasOwnProperty.call(step, 'requireVisible') && typeof step.requireVisible !== 'boolean') {
+      throw new Error(`Template "${templateId}" dom.readText step "${step.id}" has non-boolean "requireVisible" in ${source}.`);
+    }
+    if (Object.prototype.hasOwnProperty.call(step, 'textMode')) {
+      const tm = typeof step.textMode === 'string' ? step.textMode.trim() : '';
+      if (tm !== 'innerText' && tm !== 'textContent') {
+        throw new Error(`Template "${templateId}" dom.readText step "${step.id}" has invalid "textMode" (use "innerText" or "textContent") in ${source}.`);
+      }
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(step, 'matchIndex') &&
+      !(Number.isFinite(Number(step.matchIndex)) && Number(step.matchIndex) >= 0)
+    ) {
+      throw new Error(`Template "${templateId}" dom.readText step "${step.id}" has invalid "matchIndex" in ${source}.`);
+    }
+  }
+
+  if (type === 'image') {
+    if (operator !== 'capture' && operator !== 'input') {
+      throw new Error(`Template "${templateId}" step "${step.id}" image supports operators "capture" and "input" in ${source}.`);
+    }
+    if (operator === 'capture') {
+      if (!stepValue) {
+        throw new Error(`Template "${templateId}" step "${step.id}" requires non-empty "value" in ${source}.`);
+      }
+      if (typeof step.selector !== 'string' || !step.selector.trim()) {
+        throw new Error(`Template "${templateId}" image.capture step "${step.id}" requires "selector" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'readySelector') && typeof step.readySelector !== 'string') {
+        throw new Error(`Template "${templateId}" image.capture step "${step.id}" has non-string "readySelector" in ${source}.`);
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(step, 'readyTimeoutMs') &&
+        !(Number.isFinite(Number(step.readyTimeoutMs)) && Number(step.readyTimeoutMs) > 0)
+      ) {
+        throw new Error(`Template "${templateId}" image.capture step "${step.id}" has invalid "readyTimeoutMs" in ${source}.`);
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(step, 'readyMatchIndex') &&
+        !(Number.isFinite(Number(step.readyMatchIndex)) && Number(step.readyMatchIndex) >= 0)
+      ) {
+        throw new Error(`Template "${templateId}" image.capture step "${step.id}" has invalid "readyMatchIndex" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'readyRequireVisible') && typeof step.readyRequireVisible !== 'boolean') {
+        throw new Error(`Template "${templateId}" image.capture step "${step.id}" has non-boolean "readyRequireVisible" in ${source}.`);
+      }
+    }
+    if (operator === 'input') {
+      if (!stepValue) {
+        throw new Error(`Template "${templateId}" step "${step.id}" requires non-empty "value" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'accept') && typeof step.accept !== 'string') {
+        throw new Error(`Template "${templateId}" step "${step.id}" has non-string "accept" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'maxBytes') && !(Number.isFinite(Number(step.maxBytes)) && Number(step.maxBytes) >= 1)) {
+        throw new Error(`Template "${templateId}" step "${step.id}" has invalid "maxBytes" in ${source}.`);
+      }
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(step, 'timeoutMs')) {
+    const timeoutMs = Number(step.timeoutMs);
+    if (!(Number.isFinite(timeoutMs) && timeoutMs > 0)) {
+      throw new Error(`Template "${templateId}" step at ${path} has invalid "timeoutMs" in ${source}.`);
+    }
+  }
+}
+
+function tbrgNormalizeDeckStyle(deckStyle, templateId, source) {
+  if (!deckStyle) {
+    return null;
+  }
+  if (typeof deckStyle !== 'object' || Array.isArray(deckStyle)) {
+    throw new Error(`Template "${templateId}" has invalid "deckStyle" in ${source}.`);
+  }
+  const normalized = {};
+  for (const [key, value] of Object.entries(deckStyle)) {
+    if (value == null) {
+      continue;
+    }
+    if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+      throw new Error(`Template "${templateId}" deckStyle key "${key}" must be primitive in ${source}.`);
+    }
+    normalized[key] = value;
+  }
+  return normalized;
 }
 
 function tbrgNormalizeTemplate(template, source) {
@@ -35,6 +239,10 @@ function tbrgNormalizeTemplate(template, source) {
       if (!Array.isArray(task.steps)) {
         throw new Error(`Template "${template.id}" task "${task.id || index}" must include a "steps" array.`);
       }
+
+      task.steps.forEach((step, stepIndex) => {
+        tbrgValidateStep(step, template.id, source, `tasks[${index}].steps[${stepIndex}]`);
+      });
 
       const normalizedTask = {
         id: typeof task.id === 'string' ? task.id : `task_${index + 1}`,
@@ -64,9 +272,25 @@ function tbrgNormalizeTemplate(template, source) {
     ? template.steps
     : normalizedTasks.flatMap((task) => task.steps);
 
+  if (hasSteps) {
+    template.steps.forEach((step, stepIndex) => {
+      tbrgValidateStep(step, template.id, source, `steps[${stepIndex}]`);
+    });
+  }
+
   const frameResolveTimeoutMs = Number(template.frameResolveTimeoutMs);
   const normalizedFrameResolveTimeoutMs =
     Number.isFinite(frameResolveTimeoutMs) && frameResolveTimeoutMs > 0 ? frameResolveTimeoutMs : 0;
+  const themeId = typeof template.themeId === 'string' ? template.themeId.trim() : '';
+  const deckCss = typeof template.deckCss === 'string' ? template.deckCss : '';
+  const slideLayouts = template.slideLayouts && typeof template.slideLayouts === 'object' && !Array.isArray(template.slideLayouts)
+    ? template.slideLayouts
+    : null;
+  if (template.slideLayouts && !slideLayouts) {
+    throw new Error(`Template "${template.id}" has invalid "slideLayouts" in ${source}.`);
+  }
+  const deckStyle = tbrgNormalizeDeckStyle(template.deckStyle, template.id, source);
+  const slidesHtmlFileResolved = `templates/${template.id}/default-slides.html`;
 
   return {
     id: template.id,
@@ -78,6 +302,11 @@ function tbrgNormalizeTemplate(template, source) {
     steps: normalizedSteps,
     tasks: normalizedTasks,
     slides: Array.isArray(template.slides) ? template.slides : [],
+    themeId,
+    deckStyle,
+    deckCss,
+    slideLayouts,
+    slidesHtmlFileResolved,
     source
   };
 }

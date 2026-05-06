@@ -6,6 +6,417 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  function tbrgNow() {
+    return Date.now();
+  }
+
+  function tbrgToDisplayString(value) {
+    if (value == null) {
+      return '';
+    }
+    if (typeof value === 'string') {
+      return value;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value);
+    }
+    try {
+      const json = JSON.stringify(value, null, 2);
+      return typeof json === 'string' ? json : String(value);
+    } catch (_e) {
+      return String(value);
+    }
+  }
+
+  function tbrgCreateEl(tag, attrs = {}, children = []) {
+    const el = document.createElement(tag);
+    Object.entries(attrs || {}).forEach(([k, v]) => {
+      if (v == null) {
+        return;
+      }
+      if (k === 'class') {
+        el.className = String(v);
+        return;
+      }
+      if (k === 'text') {
+        el.textContent = String(v);
+        return;
+      }
+      if (k === 'html') {
+        el.innerHTML = String(v);
+        return;
+      }
+      if (k.startsWith('on') && typeof v === 'function') {
+        el.addEventListener(k.slice(2).toLowerCase(), v);
+        return;
+      }
+      el.setAttribute(k, String(v));
+    });
+    for (const child of children || []) {
+      if (child == null) {
+        continue;
+      }
+      el.appendChild(child instanceof Node ? child : document.createTextNode(String(child)));
+    }
+    return el;
+  }
+
+  function tbrgEnsureDialogStyles() {
+    const existing = document.getElementById('tbrg-input-dialog-styles');
+    if (existing) {
+      return;
+    }
+    const style = document.createElement('style');
+    style.id = 'tbrg-input-dialog-styles';
+    style.textContent = `
+      .tbrg-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        background: rgba(0, 0, 0, 0.55);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+      .tbrg-modal {
+        width: min(720px, 100%);
+        background: #0b1220;
+        color: #e5e7eb;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 12px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      }
+      .tbrg-modal-header {
+        padding: 14px 16px 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .tbrg-title {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0;
+      }
+      .tbrg-badge {
+        font-size: 12px;
+        opacity: 0.9;
+      }
+      .tbrg-modal-body {
+        padding: 14px 16px 6px;
+      }
+      .tbrg-label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        margin: 0 0 6px;
+      }
+      .tbrg-help {
+        margin: 0 0 10px;
+        font-size: 12px;
+        opacity: 0.85;
+        line-height: 1.35;
+      }
+      .tbrg-input, .tbrg-textarea {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.06);
+        color: #e5e7eb;
+        outline: none;
+        font-size: 13px;
+      }
+      .tbrg-textarea {
+        min-height: 120px;
+        resize: vertical;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      }
+      .tbrg-error {
+        margin-top: 10px;
+        color: #fecaca;
+        background: rgba(220, 38, 38, 0.12);
+        border: 1px solid rgba(220, 38, 38, 0.22);
+        padding: 10px;
+        border-radius: 10px;
+        font-size: 12px;
+        white-space: pre-wrap;
+      }
+      .tbrg-modal-footer {
+        padding: 12px 16px 14px;
+        border-top: 1px solid rgba(255, 255, 255, 0.10);
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+      .tbrg-btn {
+        padding: 9px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.08);
+        color: #e5e7eb;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .tbrg-btn-primary {
+        background: #2563eb;
+        border-color: rgba(37, 99, 235, 0.65);
+      }
+      .tbrg-btn:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+    `;
+    document.documentElement.appendChild(style);
+  }
+
+  function tbrgUserCancelledError(reason) {
+    const error = new Error(reason || 'User cancelled input.');
+    error.name = 'TBRG_USER_CANCELLED';
+    return error;
+  }
+
+  function tbrgShowBlockingDialog({ title, badge, label, helpText, bodyEl, primaryText, timeoutMs }) {
+    tbrgEnsureDialogStyles();
+
+    const existing = document.getElementById('tbrg-input-dialog-overlay');
+    if (existing) {
+      existing.remove();
+    }
+
+    const errorBox = tbrgCreateEl('div', { class: 'tbrg-error', style: 'display:none' }, []);
+
+    const overlay = tbrgCreateEl('div', { class: 'tbrg-overlay', id: 'tbrg-input-dialog-overlay' }, []);
+    const modal = tbrgCreateEl('div', { class: 'tbrg-modal', role: 'dialog', 'aria-modal': 'true' }, []);
+    const header = tbrgCreateEl('div', { class: 'tbrg-modal-header' }, [
+      tbrgCreateEl('h3', { class: 'tbrg-title', text: title || 'Automation Input' }),
+      tbrgCreateEl('div', { class: 'tbrg-badge', text: badge || '' })
+    ]);
+    const body = tbrgCreateEl('div', { class: 'tbrg-modal-body' }, [
+      label ? tbrgCreateEl('div', { class: 'tbrg-label', text: label }) : null,
+      helpText ? tbrgCreateEl('p', { class: 'tbrg-help', text: helpText }) : null,
+      bodyEl,
+      errorBox
+    ].filter(Boolean));
+
+    const cancelBtn = tbrgCreateEl('button', { class: 'tbrg-btn', type: 'button', text: 'Cancel' });
+    const okBtn = tbrgCreateEl('button', { class: 'tbrg-btn tbrg-btn-primary', type: 'button', text: primaryText || 'Submit' });
+    const footer = tbrgCreateEl('div', { class: 'tbrg-modal-footer' }, [cancelBtn, okBtn]);
+
+    modal.appendChild(header);
+    modal.appendChild(body);
+    modal.appendChild(footer);
+    overlay.appendChild(modal);
+    document.documentElement.appendChild(overlay);
+
+    function setError(msg) {
+      if (!msg) {
+        errorBox.style.display = 'none';
+        errorBox.textContent = '';
+        return;
+      }
+      errorBox.style.display = 'block';
+      errorBox.textContent = String(msg);
+    }
+
+    let finished = false;
+    let timeoutId = null;
+
+    function cleanup() {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      overlay.remove();
+      document.removeEventListener('keydown', onKeydown, true);
+    }
+
+    function onKeydown(e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        cancel();
+      }
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        e.stopPropagation();
+        confirm();
+      }
+    }
+
+    function cancel() {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      reject(tbrgUserCancelledError('User cancelled input.'));
+    }
+
+    async function confirm() {
+      if (finished) return;
+      setError('');
+      try {
+        okBtn.disabled = true;
+        cancelBtn.disabled = true;
+        const value = await onConfirm();
+        finished = true;
+        cleanup();
+        resolve(value);
+      } catch (e) {
+        okBtn.disabled = false;
+        cancelBtn.disabled = false;
+        setError(e?.message || String(e));
+      }
+    }
+
+    let resolve;
+    let reject;
+    let onConfirm = async () => true;
+
+    const promise = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+
+    cancelBtn.addEventListener('click', cancel);
+    okBtn.addEventListener('click', confirm);
+    overlay.addEventListener('mousedown', (e) => {
+      if (e.target === overlay) {
+        cancel();
+      }
+    });
+    document.addEventListener('keydown', onKeydown, true);
+
+    if (Number(timeoutMs) > 0) {
+      timeoutId = setTimeout(() => {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        reject(new Error(`Timed out waiting for user input (${Math.round(Number(timeoutMs) / 1000)}s).`));
+      }, Number(timeoutMs));
+    }
+
+    requestAnimationFrame(() => {
+      try {
+        const focusable = modal.querySelector('input, textarea, button, select, [tabindex]:not([tabindex="-1"])');
+        if (focusable) {
+          focusable.focus();
+        } else {
+          okBtn.focus();
+        }
+      } catch (_e) {
+        // Ignore focus errors.
+      }
+    });
+
+    return {
+      setConfirmHandler(handler) {
+        onConfirm = handler;
+      },
+      promise
+    };
+  }
+
+  async function tbrgReadFileAsText(file, maxBytes) {
+    if (!file) {
+      throw new Error('No file selected.');
+    }
+    if (Number(maxBytes) > 0 && file.size > Number(maxBytes)) {
+      throw new Error(`File is too large (${file.size} bytes). Max is ${Number(maxBytes)} bytes.`);
+    }
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Failed to read file.'));
+      reader.readAsText(file);
+    });
+  }
+
+  async function tbrgReadFileAsDataUrl(file, maxBytes) {
+    if (!file) {
+      throw new Error('No file selected.');
+    }
+    if (Number(maxBytes) > 0 && file.size > Number(maxBytes)) {
+      throw new Error(`File is too large (${file.size} bytes). Max is ${Number(maxBytes)} bytes.`);
+    }
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Failed to read file.'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function tbrgParseCsvLine(line, delimiter) {
+    const out = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i += 1) {
+      const ch = line[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          const next = line[i + 1];
+          if (next === '"') {
+            cur += '"';
+            i += 1;
+          } else {
+            inQuotes = false;
+          }
+        } else {
+          cur += ch;
+        }
+      } else {
+        if (ch === '"') {
+          inQuotes = true;
+        } else if (ch === delimiter) {
+          out.push(cur);
+          cur = '';
+        } else {
+          cur += ch;
+        }
+      }
+    }
+    out.push(cur);
+    return out;
+  }
+
+  function tbrgParseCsv(text, { delimiter = ',', hasHeader = true, maxRows = 5000 } = {}) {
+    const del = typeof delimiter === 'string' && delimiter.length ? delimiter : ',';
+    const safeMax = Number(maxRows) > 0 ? Math.floor(Number(maxRows)) : 5000;
+    const raw = String(text || '');
+    const normalized = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = normalized.split('\n').filter((l) => l.trim().length > 0);
+    if (lines.length === 0) {
+      return { headers: [], rows: [] };
+    }
+
+    const rows = [];
+    const first = tbrgParseCsvLine(lines[0], del).map((v) => v.trim());
+    let headers = [];
+    let startIndex = 0;
+
+    if (hasHeader !== false) {
+      headers = first.map((h, idx) => (h ? h : `col_${idx + 1}`));
+      startIndex = 1;
+    } else {
+      headers = first.map((_h, idx) => `col_${idx + 1}`);
+      rows.push(Object.fromEntries(headers.map((h, i) => [h, first[i] ?? ''])));
+      startIndex = 1;
+    }
+
+    for (let i = startIndex; i < lines.length && rows.length < safeMax; i += 1) {
+      const cols = tbrgParseCsvLine(lines[i], del);
+      const row = {};
+      for (let c = 0; c < headers.length; c += 1) {
+        row[headers[c]] = (cols[c] ?? '').trim();
+      }
+      rows.push(row);
+    }
+    return { headers, rows };
+  }
+
   function tbrgNormalizeMatchIndex(matchIndex) {
     const n = Number(matchIndex);
     return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
@@ -43,18 +454,23 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
     );
   }
 
-  async function tbrgWaitForSelector(selector, timeoutMs, matchIndex = 0) {
+  async function tbrgWaitForSelector(selector, timeoutMs, matchIndex = 0, waitOptions = {}) {
+    const requireVisible = waitOptions.requireVisible === true;
     const idx = tbrgNormalizeMatchIndex(matchIndex);
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       const elements = document.querySelectorAll(selector);
       if (elements.length > idx) {
-        return elements[idx];
+        const candidate = elements[idx];
+        if (!requireVisible || tbrgIsElementVisible(candidate)) {
+          return candidate;
+        }
       }
       await tbrgSleep(250);
     }
 
-    throw new Error(`Timed out waiting for selector: ${selector} (matchIndex ${idx})`);
+    const visHint = requireVisible ? ' (visible)' : '';
+    throw new Error(`Timed out waiting for selector: ${selector} (matchIndex ${idx})${visHint}`);
   }
 
   async function tbrgWaitForHidden(selector, timeoutMs) {
@@ -155,6 +571,40 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
 
   function tbrgScrollHostUsesWindow(scrollHost) {
     return scrollHost === document.documentElement || scrollHost === document.body;
+  }
+
+  async function tbrgDismissSelectors(selectors, attempts = 1, postDismissDelayMs = 0) {
+    const list = Array.isArray(selectors) ? selectors.filter((s) => typeof s === 'string' && s.trim()) : [];
+    if (list.length === 0) {
+      return false;
+    }
+    const maxAttempts = Number(attempts) > 0 ? Math.min(8, Math.floor(Number(attempts))) : 1;
+    let clickedAny = false;
+    for (let i = 0; i < maxAttempts; i += 1) {
+      let clickedThisRound = false;
+      for (const selector of list) {
+        const nodes = Array.from(document.querySelectorAll(selector));
+        for (const node of nodes) {
+          if (!(node instanceof Element)) {
+            continue;
+          }
+          if (!tbrgIsElementVisible(node)) {
+            continue;
+          }
+          node.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+          await tbrgSleep(40);
+          node.click();
+          clickedThisRound = true;
+          clickedAny = true;
+        }
+      }
+      if (!clickedThisRound) {
+        break;
+      }
+      const settle = Number(postDismissDelayMs) > 0 ? Number(postDismissDelayMs) : 140;
+      await tbrgSleep(settle);
+    }
+    return clickedAny;
   }
 
   async function tbrgCaptureWideChartStrips(boundsSource, devicePixelRatio, settleMs) {
@@ -357,12 +807,33 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
     return { dataUrl: encoded, truncated };
   }
 
-  async function tbrgCaptureElement(selector, matchIndex, preCaptureDelayMs, boundsSelector, stitchOverflow) {
+  async function tbrgCaptureElement(selector, matchIndex, preCaptureDelayMs, boundsSelector, stitchOverflow, captureOptions = {}) {
+    await tbrgDismissSelectors(
+      captureOptions.dismissSelectors,
+      captureOptions.dismissAttempts,
+      captureOptions.postDismissDelayMs
+    );
+    const readySel = typeof captureOptions.readySelector === 'string' ? captureOptions.readySelector.trim() : '';
+    if (readySel) {
+      const rTimeout =
+        Number(captureOptions.readyTimeoutMs) > 0 ? Number(captureOptions.readyTimeoutMs) : 60000;
+      const rIdx = tbrgNormalizeMatchIndex(captureOptions.readyMatchIndex);
+      const rRequireVisible = captureOptions.readyRequireVisible !== false;
+      await tbrgWaitForSelector(readySel, rTimeout, rIdx, { requireVisible: rRequireVisible });
+    }
     let root = tbrgGetElement(selector, matchIndex);
-    root.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'start' });
-    const settleMs = Number(preCaptureDelayMs) > 0 ? Number(preCaptureDelayMs) : 450;
+    const scrollBlock = typeof captureOptions.captureScrollBlock === 'string' && captureOptions.captureScrollBlock.trim()
+      ? captureOptions.captureScrollBlock.trim()
+      : 'center';
+    root.scrollIntoView({ behavior: 'auto', block: scrollBlock, inline: 'start' });
+    const settleMs = Number(captureOptions.captureSettleMs) > 0
+      ? Number(captureOptions.captureSettleMs)
+      : (Number(preCaptureDelayMs) > 0 ? Number(preCaptureDelayMs) : 450);
     await tbrgSleep(settleMs);
     root = tbrgGetElement(selector, matchIndex);
+    if (captureOptions.captureEnsureVisible !== false && !tbrgIsElementVisible(root)) {
+      throw new Error(`Capture target "${selector}" is not visible after scrolling.`);
+    }
 
     let boundsSource = root;
     if (boundsSelector) {
@@ -421,58 +892,231 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
     return dataUrl;
   }
 
-  async function tbrgRunStep(step) {
+  function tbrgToNumberForAggregation(value) {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : null;
+    }
+    const text = String(value == null ? '' : value).trim();
+    if (!text) {
+      return null;
+    }
+    const normalized = text.endsWith('%') ? text.slice(0, -1).trim() : text;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  async function tbrgRunStep(step, resultsContext) {
     const timeoutMs = Number(step.timeoutMs) > 0 ? Number(step.timeoutMs) : 10000;
     const matchIndex = step.matchIndex;
+    const type = String(step.type || '').trim();
+    const operator = String(step.operator || '').trim();
 
-    if (step.type === 'delay') {
-      const durationMs = Number(step.durationMs) > 0 ? Number(step.durationMs) : 0;
-      if (durationMs <= 0) {
-        throw new Error('delay step requires durationMs > 0');
+    if (type === 'text' && operator === 'input') {
+      const stepId = String(step.id || '').trim();
+      if (!stepId) {
+        throw new Error('text.input step requires id');
       }
-      await tbrgSleep(durationMs);
+      const label = typeof step.label === 'string' ? step.label : stepId;
+      const helpText = typeof step.helpText === 'string' ? step.helpText : '';
+      const isMultiline = step.multiline === true;
+      const placeholder = typeof step.placeholder === 'string' ? step.placeholder : '';
+      const def = typeof step.default === 'string' ? step.default : '';
+
+      const inputEl = isMultiline
+        ? tbrgCreateEl('textarea', { class: 'tbrg-textarea', placeholder }, [])
+        : tbrgCreateEl('input', { class: 'tbrg-input', type: 'text', placeholder }, []);
+      inputEl.value = def;
+
+      const dialog = tbrgShowBlockingDialog({
+        title: 'Automation Input',
+        badge: stepId,
+        label,
+        helpText,
+        bodyEl: inputEl,
+        primaryText: 'Submit',
+        timeoutMs
+      });
+
+      dialog.setConfirmHandler(async () => {
+        return String(inputEl.value || '');
+      });
+
+      const value = await dialog.promise;
+      return { ok: true, value };
+    }
+
+    if (type === 'csv' && operator === 'input') {
+      const stepId = String(step.id || '').trim();
+      if (!stepId) {
+        throw new Error('csv.input step requires id');
+      }
+      const label = typeof step.label === 'string' ? step.label : stepId;
+      const helpText = typeof step.helpText === 'string' ? step.helpText : '';
+      const delimiter = typeof step.delimiter === 'string' ? step.delimiter : ',';
+      const hasHeader = step.hasHeader !== false;
+      const maxRows = Number(step.maxRows) > 0 ? Number(step.maxRows) : 5000;
+      const maxBytes = Number(step.maxBytes) > 0 ? Number(step.maxBytes) : 0;
+
+      const fileInput = tbrgCreateEl('input', { class: 'tbrg-input', type: 'file', accept: '.csv,text/csv' }, []);
+
+      const dialog = tbrgShowBlockingDialog({
+        title: 'Automation Input',
+        badge: stepId,
+        label,
+        helpText,
+        bodyEl: fileInput,
+        primaryText: 'Use file',
+        timeoutMs
+      });
+
+      dialog.setConfirmHandler(async () => {
+        const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+        const text = await tbrgReadFileAsText(file, maxBytes);
+        const parsed = tbrgParseCsv(text, { delimiter, hasHeader, maxRows });
+        return {
+          name: file ? file.name : '',
+          size: file ? file.size : 0,
+          headers: parsed.headers,
+          rows: parsed.rows
+        };
+      });
+
+      const value = await dialog.promise;
+      return { ok: true, value };
+    }
+
+    if (type === 'csv' && operator === 'aggregate') {
+      const stepId = String(step.id || '').trim();
+      if (!stepId) {
+        throw new Error('csv.aggregate step requires id');
+      }
+      const sourceValue = String(step.sourceValue || '').trim();
+      const aggregateType = String(step.aggregateType || '').trim();
+      const column = String(step.column || '').trim();
+      if (!sourceValue || !aggregateType || !column) {
+        throw new Error('csv.aggregate requires sourceValue, aggregateType, and column.');
+      }
+      if (aggregateType !== 'sum') {
+        throw new Error(`Unsupported csv.aggregate aggregateType "${aggregateType}".`);
+      }
+
+      const source = resultsContext && typeof resultsContext === 'object' ? resultsContext[sourceValue] : null;
+      const rows = Array.isArray(source?.rows) ? source.rows : null;
+      if (!rows) {
+        throw new Error(`csv.aggregate source "${sourceValue}" does not contain parsed CSV rows.`);
+      }
+
+      let sum = 0;
+      let includedCount = 0;
+      for (const row of rows) {
+        const raw = row && typeof row === 'object' ? row[column] : undefined;
+        const parsed = tbrgToNumberForAggregation(raw);
+        if (parsed == null) {
+          continue;
+        }
+        sum += parsed;
+        includedCount += 1;
+      }
+      if (includedCount === 0) {
+        throw new Error(`csv.aggregate found no numeric values in column "${column}" from "${sourceValue}".`);
+      }
+      return { ok: true, value: sum };
+    }
+
+    if (type === 'image' && operator === 'input') {
+      const stepId = String(step.id || '').trim();
+      if (!stepId) {
+        throw new Error('image.input step requires id');
+      }
+      const label = typeof step.label === 'string' ? step.label : stepId;
+      const helpText = typeof step.helpText === 'string' ? step.helpText : '';
+      const accept = typeof step.accept === 'string' ? step.accept : 'image/*,video/*';
+      const maxBytes = Number(step.maxBytes) > 0 ? Number(step.maxBytes) : 0;
+
+      const fileInput = tbrgCreateEl('input', { class: 'tbrg-input', type: 'file', accept }, []);
+
+      const dialog = tbrgShowBlockingDialog({
+        title: 'Automation Input',
+        badge: stepId,
+        label,
+        helpText,
+        bodyEl: fileInput,
+        primaryText: 'Use file',
+        timeoutMs
+      });
+
+      dialog.setConfirmHandler(async () => {
+        const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+        const dataUrl = await tbrgReadFileAsDataUrl(file, maxBytes);
+        return {
+          name: file ? file.name : '',
+          type: file ? file.type : '',
+          size: file ? file.size : 0,
+          dataUrl
+        };
+      });
+
+      const value = await dialog.promise;
+      return { ok: true, value };
+    }
+
+    if (type === 'waitFor' && operator === 'exists') {
+      const requireVisible = step.requireVisible === true;
+      await tbrgWaitForSelector(step.selector, timeoutMs, matchIndex, { requireVisible });
       return { ok: true, value: true };
     }
 
-    if (step.type === 'waitFor') {
-      await tbrgWaitForSelector(step.selector, timeoutMs, matchIndex);
-      return { ok: true, value: true };
+    if (type === 'dom' && operator === 'readText') {
+      const requireVisible = step.requireVisible === true;
+      await tbrgWaitForSelector(step.selector, timeoutMs, matchIndex, { requireVisible });
+      const el = tbrgGetElement(step.selector, matchIndex);
+      const mode =
+        typeof step.textMode === 'string' && step.textMode.trim() === 'textContent'
+          ? 'textContent'
+          : 'innerText';
+      const raw = mode === 'textContent' ? el.textContent : el.innerText;
+      const text = String(raw == null ? '' : raw).trim();
+      return { ok: true, value: text };
     }
 
-    if (step.type === 'waitForHidden') {
-      await tbrgWaitForHidden(step.selector, timeoutMs);
-      return { ok: true, value: true };
-    }
-
-    if (step.type === 'click') {
-      const element = await tbrgWaitForSelector(step.selector, timeoutMs, matchIndex);
-      element.click();
-      return { ok: true, value: true };
-    }
-
-    if (step.type === 'text') {
-      const element = await tbrgWaitForSelector(step.selector, timeoutMs, matchIndex);
-      return { ok: true, value: element.textContent.trim() };
-    }
-
-    if (step.type === 'attribute') {
-      const element = await tbrgWaitForSelector(step.selector, timeoutMs, matchIndex);
-      return { ok: true, value: element.getAttribute(step.attribute) ?? '' };
-    }
-
-    if (step.type === 'screenshot') {
-      await tbrgWaitForSelector(step.selector, timeoutMs, matchIndex);
+    if (type === 'image' && operator === 'capture') {
+      const readySel = typeof step.readySelector === 'string' ? step.readySelector.trim() : '';
+      const readyTimeout =
+        Number(step.readyTimeoutMs) > 0 ? Number(step.readyTimeoutMs) : timeoutMs;
+      const readyMatch = Object.prototype.hasOwnProperty.call(step, 'readyMatchIndex')
+        ? step.readyMatchIndex
+        : matchIndex;
+      const readyRequireVisible = step.readyRequireVisible !== false;
+      if (readySel) {
+        await tbrgWaitForSelector(readySel, readyTimeout, readyMatch, {
+          requireVisible: readyRequireVisible
+        });
+      } else {
+        await tbrgWaitForSelector(step.selector, timeoutMs, matchIndex);
+      }
       const imageDataUrl = await tbrgCaptureElement(
         step.selector,
         matchIndex,
         step.preCaptureDelayMs,
         typeof step.boundsSelector === 'string' ? step.boundsSelector : '',
-        step.stitchOverflow
+        step.stitchOverflow,
+        {
+          dismissSelectors: step.dismissSelectors,
+          dismissAttempts: step.dismissAttempts,
+          postDismissDelayMs: step.postDismissDelayMs,
+          captureScrollBlock: step.captureScrollBlock,
+          captureEnsureVisible: step.captureEnsureVisible,
+          captureSettleMs: step.captureSettleMs,
+          readySelector: readySel,
+          readyTimeoutMs: readyTimeout,
+          readyMatchIndex: readyMatch,
+          readyRequireVisible
+        }
       );
       return { ok: true, value: imageDataUrl };
     }
 
-    throw new Error(`Unsupported step type: ${step.type}`);
+    throw new Error(`Unsupported step route: ${type}.${operator}`);
   }
 
   async function tbrgExecuteTemplate(template) {
@@ -487,20 +1131,26 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
       : template.steps;
 
     for (const step of stepsToRun) {
+      const startedAt = tbrgNow();
       try {
-        const stepResult = await tbrgRunStep(step);
-        if (step.id) {
-          results[step.id] = stepResult.value;
+        const stepResult = await tbrgRunStep(step, results);
+        const valueKey = typeof step.value === 'string' ? step.value.trim() : '';
+        if (valueKey) {
+          results[valueKey] = stepResult.value;
         }
         stepResults.push({
           id: step.id,
+          value: valueKey || null,
           taskId: step.__taskId || null,
+          durationMs: tbrgNow() - startedAt,
           ...stepResult
         });
       } catch (error) {
         stepResults.push({
           id: step.id,
+          value: typeof step.value === 'string' ? step.value.trim() || null : null,
           taskId: step.__taskId || null,
+          durationMs: tbrgNow() - startedAt,
           ok: false,
           error: error.message || String(error)
         });
