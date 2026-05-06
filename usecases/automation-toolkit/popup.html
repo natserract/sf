@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blend Media Automation Toolkit</title>
+  <style>
+    body {
+      width: 360px;
+      margin: 0;
+      padding: 16px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #1f2937;
+      background: #f8fafc;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 18px;
+    }
+
+    p {
+      margin: 0 0 12px;
+      color: #475569;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #334155;
+    }
+
+    select,
+    textarea,
+    button {
+      width: 100%;
+      box-sizing: border-box;
+      border-radius: 8px;
+      border: 1px solid #cbd5e1;
+      font: inherit;
+    }
+
+    select,
+    textarea {
+      padding: 10px 12px;
+      background: #fff;
+    }
+
+    textarea {
+      min-height: 92px;
+      resize: vertical;
+    }
+
+    button {
+      padding: 10px 12px;
+      border: 0;
+      background: #2563eb;
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .secondary {
+      margin-top: 8px;
+      background: #e2e8f0;
+      color: #0f172a;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .status {
+      white-space: pre-wrap;
+      font-size: 12px;
+      line-height: 1.45;
+      color: #0f172a;
+      background: #eff6ff;
+    }
+
+    .status.error {
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
+    .status.success {
+      background: #ecfdf5;
+      color: #166534;
+    }
+
+    .muted {
+      color: #64748b;
+      font-size: 12px;
+    }
+
+    .button-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .button-row button {
+      width: auto;
+      flex: 1;
+    }
+
+    .preview-box {
+      margin-top: 8px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 12px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .toggle-row input[type="checkbox"] {
+      width: auto;
+      transform: translateY(1px);
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Blend Media Automation Toolkit</h1>
+  <p>Run automated scripts for Blend Media.</p>
+
+  <div class="card">
+    <label for="templateSelect">Automation Kit</label>
+    <select id="templateSelect" style="margin: 10px 0;"></select>
+    <div class="muted" id="templateMeta">Loading templates...</div>
+  </div>
+
+  <button id="runButton" type="button" style="margin: 10px 0;">Run Report</button>
+
+  <div class="card">
+    <div class="toggle-row">
+      <label for="debugModeToggle" style="margin: 0;">Debug mode</label>
+      <input id="debugModeToggle" type="checkbox" />
+    </div>
+    <div class="muted">When enabled, shows the DOM picker tools.</div>
+  </div>
+
+  <div class="card" id="domPickerCard" style="display: none;">
+    <label>DOM picker</label>
+    <button id="pickElementButton" type="button" class="secondary">Pick Element From Page</button>
+    <div class="preview-box" id="pickerPreview">No element picked yet.</div>
+    <div class="button-row">
+      <button id="insertTextStepButton" type="button" class="secondary" disabled>Copy Text Step</button>
+      <button id="insertScreenshotStepButton" type="button" class="secondary" disabled>Copy Screenshot Step</button>
+    </div>
+  </div>
+
+  <div class="card status" id="statusBox">Idle.</div>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>

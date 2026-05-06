@@ -1,0 +1,93 @@
+{
+  "id": "default-kit",
+  "name": "Monthly Erajaya Report Generator",
+  "tasks": [
+    {
+      "id": "getStoReport",
+      "name": "Capture STO chart area",
+      "page": "https://mc.s12.exacttarget.com/cloud/#app/Einstein%20Send%20Time%20Optimization/setup/?stackKey=S12",
+      "frameUrlIncludes": "sto.us.sfmc-einstein.com/setup/",
+      "frameResolveTimeoutMs": 60000,
+      "steps": [
+        {
+          "id": "stoChartReady",
+          "type": "waitFor",
+          "selector": ".salesforce-chart",
+          "timeoutMs": 60000
+        },
+        {
+          "id": "stoChartScreenshot",
+          "type": "screenshot",
+          "selector": ".salesforce-chart",
+          "boundsSelector": "canvas.chart",
+          "timeoutMs": 60000,
+          "matchIndex": 0,
+          "preCaptureDelayMs": 750,
+          "downloadBasename": "sto-chart"
+        }
+      ]
+    },
+    {
+      "id": "debugIntelligenceReports",
+      "name": "Intelligence Reports status metrics",
+      "page": "https://mc.s12.exacttarget.com/cloud/#app/Intelligence%20Reports/137411/visualize/2692467/page/v2/4073717?is_embed=true",
+      "frameUrlIncludes": "mc-us.datorama.com/137411/visualize/2692467/page/v2/4073717",
+      "frameResolveTimeoutMs": 60000,
+      "steps": [
+        {
+          "id": "intelStatusReady",
+          "type": "waitFor",
+          "selector": "div.status-bar-header > div.no-dimension > div.status-primary > div.primary-value > span.ng-star-inserted",
+          "timeoutMs": 60000
+        },
+        {
+          "id": "intelMetric0",
+          "type": "text",
+          "selector": "div.status-bar-header > div.no-dimension > div.status-primary > div.primary-value > span.ng-star-inserted",
+          "timeoutMs": 60000,
+          "matchIndex": 0
+        },
+        {
+          "id": "intelMetric1",
+          "type": "text",
+          "selector": "div.status-bar-header > div.no-dimension > div.status-primary > div.primary-value > span.ng-star-inserted",
+          "timeoutMs": 60000,
+          "matchIndex": 1
+        },
+        {
+          "id": "intelMetric2",
+          "type": "text",
+          "selector": "div.status-bar-header > div.no-dimension > div.status-primary > div.primary-value > span.ng-star-inserted",
+          "timeoutMs": 60000,
+          "matchIndex": 2
+        },
+        {
+          "id": "intelMetric3",
+          "type": "text",
+          "selector": "div.status-bar-header > div.no-dimension > div.status-primary > div.primary-value > span.ng-star-inserted",
+          "timeoutMs": 60000,
+          "matchIndex": 3
+        },
+        {
+          "id": "intelMetric0Screenshot",
+          "type": "screenshot",
+          "selector": "div.status-bar-header > div.no-dimension > div.status-primary > div.primary-value > span.ng-star-inserted",
+          "timeoutMs": 60000,
+          "matchIndex": 0,
+          "preCaptureDelayMs": 500,
+          "downloadBasename": "intelligence-reports-metric-0"
+        }
+      ]
+    }
+  ],
+  "slides": [
+    {
+      "title": "STO Chart",
+      "body": "{{stoChartScreenshot}}"
+    },
+    {
+      "title": "Intelligence Reports Metrics",
+      "body": "<ul><li>Metric 0: {{intelMetric0}}</li><li>Metric 1: {{intelMetric1}}</li><li>Metric 2: {{intelMetric2}}</li><li>Metric 3: {{intelMetric3}}</li></ul>{{intelMetric0Screenshot}}"
+    }
+  ]
+}

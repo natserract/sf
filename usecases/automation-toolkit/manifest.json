@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Blend Media Automation Toolkit",
+  "version": "0.1.0",
+  "description": "Blend Media Automation Toolkit",
+  "permissions": [
+    "activeTab",
+    "downloads",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons.png",
+    "48": "icons.png",
+    "128": "icons.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Run Browser Report",
+    "default_icon": {
+      "16": "icons.png",
+      "48": "icons.png",
+      "128": "icons.png"
+    }
+  }
+}
