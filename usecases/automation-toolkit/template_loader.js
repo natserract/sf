@@ -1,8 +1,6 @@
 const TBRG_CUSTOM_TEMPLATE_STORAGE_KEY = 'tbrg.customTemplateText';
 const TBRG_SELECTED_TEMPLATE_STORAGE_KEY = 'tbrg.selectedTemplateId';
-const TBRG_BUNDLED_TEMPLATE_FILES = [
-  'templates/default-kit/default-sales.json'
-];
+const TBRG_TEMPLATE_INDEX_FILE = 'templates/index.json';
 
 const TBRG_ALLOWED_STEP_TYPES = new Set(['text', 'csv', 'waitFor', 'image', 'dom']);
 
@@ -12,6 +10,37 @@ async function tbrgFetchText(relativePath) {
     throw new Error(`Failed to load template asset: ${relativePath}`);
   }
   return response.text();
+}
+
+async function tbrgLoadTemplateIndex() {
+  let parsed;
+  try {
+    const raw = await tbrgFetchText(TBRG_TEMPLATE_INDEX_FILE);
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Failed to load template index "${TBRG_TEMPLATE_INDEX_FILE}": ${error.message || String(error)}`);
+  }
+
+  const entries = Array.isArray(parsed)
+    ? parsed
+    : (Array.isArray(parsed?.templates) ? parsed.templates : null);
+  if (!entries) {
+    throw new Error(`Template index "${TBRG_TEMPLATE_INDEX_FILE}" must be an array or { templates: [] }.`);
+  }
+
+  const normalized = [];
+  for (const entry of entries) {
+    if (typeof entry !== 'string') {
+      continue;
+    }
+    const p = entry.trim().replace(/^\.?\//, '');
+    if (!p || !p.startsWith('templates/') || !p.endsWith('/config.json')) {
+      continue;
+    }
+    normalized.push(p);
+  }
+
+  return [...new Set(normalized)];
 }
 
 function tbrgValidateStep(step, templateId, source, path) {
@@ -216,6 +245,26 @@ function tbrgNormalizeDeckStyle(deckStyle, templateId, source) {
   return normalized;
 }
 
+function tbrgNormalizeEmbedUrl(templateId, embedUrlRaw, source) {
+  const embedUrl = typeof embedUrlRaw === 'string' ? embedUrlRaw.trim() : '';
+  if (!embedUrl) {
+    throw new Error(`Template "${templateId}" runMode "embed" requires non-empty "embedUrl" in ${source}.`);
+  }
+  if (!embedUrl.startsWith('https://')) {
+    throw new Error(`Template "${templateId}" embedUrl must use https in ${source}.`);
+  }
+  let parsed;
+  try {
+    parsed = new URL(embedUrl);
+  } catch (_error) {
+    throw new Error(`Template "${templateId}" embedUrl is not a valid URL in ${source}.`);
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new Error(`Template "${templateId}" embedUrl must use https in ${source}.`);
+  }
+  return embedUrl;
+}
+
 function tbrgNormalizeTemplate(template, source) {
   if (!template || typeof template !== 'object') {
     throw new Error(`Invalid template object from ${source}`);
@@ -227,6 +276,34 @@ function tbrgNormalizeTemplate(template, source) {
 
   const hasSteps = Array.isArray(template.steps);
   const hasTasks = Array.isArray(template.tasks);
+  const runMode = typeof template.runMode === 'string' ? template.runMode.trim() : '';
+
+  if (runMode === 'embed') {
+    if (hasSteps || hasTasks) {
+      throw new Error(`Template "${template.id}" runMode "embed" must not define "steps" or "tasks" in ${source}.`);
+    }
+    const embedUrl = tbrgNormalizeEmbedUrl(template.id, template.embedUrl, source);
+    return {
+      id: template.id,
+      name: template.name || template.id,
+      runMode: 'embed',
+      embedUrl,
+      page: '',
+      frameSelector: '',
+      frameUrlIncludes: '',
+      frameResolveTimeoutMs: 0,
+      steps: [],
+      tasks: null,
+      slides: Array.isArray(template.slides) ? template.slides : [],
+      themeId: '',
+      deckStyle: null,
+      deckCss: '',
+      slideLayouts: null,
+      slidesHtmlFileResolved: '',
+      source
+    };
+  }
+
   if (!hasSteps && !hasTasks) {
     throw new Error(`Template "${template.id}" must include either "steps" or "tasks".`);
   }
@@ -290,11 +367,12 @@ function tbrgNormalizeTemplate(template, source) {
     throw new Error(`Template "${template.id}" has invalid "slideLayouts" in ${source}.`);
   }
   const deckStyle = tbrgNormalizeDeckStyle(template.deckStyle, template.id, source);
-  const slidesHtmlFileResolved = `templates/${template.id}/default-slides.html`;
+  const slidesHtmlFileResolved = `templates/${template.id}/template.html`;
 
   return {
     id: template.id,
     name: template.name || template.id,
+    runMode: runMode || '',
     page: template.page || '',
     frameSelector: typeof template.frameSelector === 'string' ? template.frameSelector : '',
     frameUrlIncludes: typeof template.frameUrlIncludes === 'string' ? template.frameUrlIncludes : '',
@@ -331,8 +409,9 @@ function tbrgParseTemplateText(templateText, source) {
 }
 
 async function tbrgLoadBundledTemplates() {
+  const templateFiles = await tbrgLoadTemplateIndex();
   const templates = [];
-  for (const relativePath of TBRG_BUNDLED_TEMPLATE_FILES) {
+  for (const relativePath of templateFiles) {
     const templateText = await tbrgFetchText(relativePath);
     templates.push(tbrgParseTemplateText(templateText, relativePath));
   }

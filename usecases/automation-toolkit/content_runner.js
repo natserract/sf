@@ -2,6 +2,8 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
   chrome.runtime.onMessage.removeListener(self.__TBRG_MESSAGE_HANDLER__);
 }
 
+(() => {
+
   function tbrgSleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -1199,3 +1201,5 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
   };
 
   chrome.runtime.onMessage.addListener(self.__TBRG_MESSAGE_HANDLER__);
+
+})();

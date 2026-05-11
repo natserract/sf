@@ -1,6 +1,8 @@
 const templateSelectEl = document.getElementById('templateSelect');
 const templateMetaEl = document.getElementById('templateMeta');
 const runButtonEl = document.getElementById('runButton');
+const stopButtonEl = document.getElementById('stopButton');
+const closePopupButtonEl = document.getElementById('closePopupButton');
 const statusBoxEl = document.getElementById('statusBox');
 const debugModeToggleEl = document.getElementById('debugModeToggle');
 const domPickerCardEl = document.getElementById('domPickerCard');
@@ -21,6 +23,7 @@ let latestProgress = {
   completedSteps: 0,
   totalSteps: 0
 };
+let ignoreProgressUpdates = false;
 
 function setStatus(message, tone) {
   statusBoxEl.textContent = message;
@@ -88,7 +91,23 @@ function sendMessage(message, timeoutMs = 90000) {
 function renderTemplateOptions(templates, selectedTemplateId) {
   templateSelectEl.innerHTML = '';
 
-  templates.forEach((template) => {
+  const sorted = [...templates].sort((a, b) => {
+    const la = String(a.name || a.id || '').toLowerCase();
+    const lb = String(b.name || b.id || '').toLowerCase();
+    return la.localeCompare(lb, undefined, { sensitivity: 'base' });
+  });
+
+  if (sorted.length === 0) {
+    templateSelectEl.disabled = true;
+    runButtonEl.disabled = true;
+    templateMetaEl.textContent = 'No templates found (config.json).';
+    return;
+  }
+
+  templateSelectEl.disabled = false;
+  runButtonEl.disabled = false;
+
+  sorted.forEach((template) => {
     const option = document.createElement('option');
     option.value = template.id;
     option.textContent = `${template.name || template.id}`;
@@ -105,6 +124,11 @@ function updateTemplateMeta(templates) {
   const currentTemplate = templates.find((template) => template.id === templateSelectEl.value);
   if (!currentTemplate) {
     templateMetaEl.textContent = 'No template selected.';
+    return;
+  }
+
+  if (currentTemplate.runMode === 'embed') {
+    templateMetaEl.textContent = 'Embedded tool | Opens as overlay on the current tab';
     return;
   }
 
@@ -255,6 +279,9 @@ function insertStepFromPick(stepType) {
 
 async function runReport() {
   const selectedTemplateId = templateSelectEl.value;
+  if (!selectedTemplateId) {
+    throw new Error('No template selected.');
+  }
   setStatus('Starting report run...');
   updateProgressUi({ completedTasks: 0, totalTasks: 0, completedSteps: 0, totalSteps: 0 }, 'Starting...');
   runButtonEl.disabled = true;
@@ -266,22 +293,38 @@ async function runReport() {
     }, 15 * 60 * 1000);
 
     if (!response.ok) {
+      if (response.stopped) {
+        ignoreProgressUpdates = true;
+        setStatus(response.error || 'Automation stopped by user.');
+        setIdleProgressUi();
+        return;
+      }
       throw new Error(response.error || 'Report run failed.');
     }
 
-    const screenshotFiles = Array.isArray(response.screenshotFilenames)
-      ? response.screenshotFilenames.join(', ')
-      : '';
+    if (response.embedOpened) {
+      setStatus(
+        [
+          `Opened embedded view for: ${response.templateId}`,
+          'Use Close at the top of the page to dismiss the overlay.'
+        ].join('\n'),
+        'success'
+      );
+    } else {
+      const screenshotFiles = Array.isArray(response.screenshotFilenames)
+        ? response.screenshotFilenames.join(', ')
+        : '';
 
-    const lines = [
-      `Finished template: ${response.templateId}`,
-      `Extracted keys: ${response.resultKeys.join(', ') || 'none'}`,
-      `Deck downloaded as: ${response.downloadFilename}`,
-      screenshotFiles ? `Screenshot downloads: ${screenshotFiles}` : '',
-      response.warning ? `Warning: ${response.warning}` : ''
-    ].filter(Boolean);
+      const lines = [
+        `Finished template: ${response.templateId}`,
+        `Extracted keys: ${response.resultKeys.join(', ') || 'none'}`,
+        `Deck downloaded as: ${response.downloadFilename}`,
+        screenshotFiles ? `Screenshot downloads: ${screenshotFiles}` : '',
+        response.warning ? `Warning: ${response.warning}` : ''
+      ].filter(Boolean);
 
-    setStatus(lines.join('\n'), 'success');
+      setStatus(lines.join('\n'), 'success');
+    }
     updateProgressUi({
       completedTasks: latestProgress.completedTasks,
       totalTasks: latestProgress.totalTasks,
@@ -302,8 +345,31 @@ async function runReportWithProgress() {
   await runReport();
 }
 
+async function stopAutomation() {
+  stopButtonEl.disabled = true;
+  ignoreProgressUpdates = true;
+  setIdleProgressUi();
+  try {
+    const response = await sendMessage({ type: 'TBRG_STOP_JOB' });
+    if (!response.ok) {
+      throw new Error(response.error || 'Failed to stop automation.');
+    }
+    setStatus('Automation stop requested.');
+    setIdleProgressUi();
+  } catch (error) {
+    setStatus(error.message || 'Failed to stop automation.', 'error');
+  } finally {
+    stopButtonEl.disabled = false;
+  }
+}
+
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type !== 'TBRG_JOB_PROGRESS') {
+    return;
+  }
+  if (message.stage === 'started') {
+    ignoreProgressUpdates = false;
+  } else if (ignoreProgressUpdates) {
     return;
   }
   const taskSummary = `Tasks: ${tbrgSafeNumber(message.completedTasks)}/${tbrgSafeNumber(message.totalTasks)}`;
@@ -354,6 +420,11 @@ pickElementButtonEl.addEventListener('click', pickElementFromPage);
 insertTextStepButtonEl.addEventListener('click', () => insertStepFromPick('waitFor'));
 insertScreenshotStepButtonEl.addEventListener('click', () => insertStepFromPick('image'));
 runButtonEl.addEventListener('click', runReportWithProgress);
+stopButtonEl.addEventListener('click', () => {
+  stopAutomation();
+  window.close();
+});
+closePopupButtonEl.addEventListener('click', () => window.close());
 
 setPickedElement(null);
 setIdleProgressUi();

@@ -1,6 +1,6 @@
 {
-  "id": "default-kit",
-  "name": "Monthly Erajaya Report Generator",
+  "id": "monthly-report-generator",
+  "name": "Monthly Report Generator",
   "themeId": "eraspace-kpi",
   "deckStyle": {
     "deckBg": "#f6f8ff",

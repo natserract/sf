@@ -1,0 +1,7 @@
+{
+  "templates": [
+    "templates/monthly-report-generator/config.json",
+    "templates/data-catalog/config.json",
+    "templates/data-extension-report/config.json"
+  ]
+}

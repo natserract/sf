@@ -5,3 +5,4 @@
 .env.prod
 .sfdx
 experimental/export_recipes/recipes.json
+trailhead-hunter/
