@@ -132,6 +132,20 @@ function updateTemplateMeta(templates) {
     return;
   }
 
+  if (currentTemplate.runMode === 'embedAfter') {
+    let stepCount = 0;
+    if (Array.isArray(currentTemplate.tasks) && currentTemplate.tasks.length > 0) {
+      stepCount = currentTemplate.tasks.reduce(
+        (acc, task) => acc + (Array.isArray(task.steps) ? task.steps.length : 0),
+        0
+      );
+    } else if (Array.isArray(currentTemplate.steps)) {
+      stepCount = currentTemplate.steps.length;
+    }
+    templateMetaEl.textContent = `Automation then embedded tool | ${currentTemplate.page || 'Per-task page'} | ${stepCount} step${stepCount === 1 ? '' : 's'}`;
+    return;
+  }
+
   const stepCount = Array.isArray(currentTemplate.steps) ? currentTemplate.steps.length : 0;
   templateMetaEl.textContent = `${currentTemplate.page || 'Current page'} | ${stepCount} step${stepCount === 1 ? '' : 's'}`;
 }

@@ -777,6 +777,23 @@ async function tbrgPickDomElementFromActiveTab() {
   });
 }
 
+async function tbrgShowEmbedOnTab(tabId, template) {
+  if (!Number.isInteger(tabId)) {
+    throw new Error('Invalid tab for embed overlay.');
+  }
+  await tbrgExecuteScript(tabId, ['embed_overlay.js'], false);
+  await tbrgExecuteScriptFunction(
+    tabId,
+    (payload) => {
+      if (typeof self.__TBRG_EMBED_SHOW__ === 'function') {
+        self.__TBRG_EMBED_SHOW__(payload);
+      }
+    },
+    false,
+    [{ url: template.embedUrl, title: template.name || template.id }]
+  );
+}
+
 async function tbrgRunEmbedJob(template, runGeneration) {
   tbrgAssertRunActive(runGeneration);
   const activeTab = await tbrgGetActiveTab();
@@ -798,18 +815,7 @@ async function tbrgRunEmbedJob(template, runGeneration) {
   await tbrgNotifyJobProgress(startedPayload);
 
   tbrgAssertRunActive(runGeneration);
-  await tbrgExecuteScript(activeTab.id, ['embed_overlay.js'], false);
-  tbrgAssertRunActive(runGeneration);
-  await tbrgExecuteScriptFunction(
-    activeTab.id,
-    (payload) => {
-      if (typeof self.__TBRG_EMBED_SHOW__ === 'function') {
-        self.__TBRG_EMBED_SHOW__(payload);
-      }
-    },
-    false,
-    [{ url: template.embedUrl, title: template.name || template.id }]
-  );
+  await tbrgShowEmbedOnTab(activeTab.id, template);
   tbrgAssertRunActive(runGeneration);
 
   const finishedPayload = {
@@ -930,6 +936,35 @@ async function tbrgRunJob(templateId, runGeneration) {
   tbrgAssertRunActive(runGeneration);
   const screenshotDownloads = await tbrgDownloadScreenshotExports(template, executionResult.results);
 
+  if (template.runMode === 'embedAfter') {
+    tbrgAssertRunActive(runGeneration);
+    if (!Number.isInteger(progressTabId)) {
+      throw new Error('No active tab for embed overlay.');
+    }
+    await tbrgShowEmbedOnTab(progressTabId, template);
+    tbrgAssertRunActive(runGeneration);
+
+    const finishedEmbedPayload = {
+      stage: 'finished',
+      templateId: template.id,
+      completedTasks: totalTasks,
+      totalTasks,
+      completedSteps: (executionResult.stepResults || []).filter((step) => step.ok).length,
+      totalSteps,
+      downloadFilename: ''
+    };
+    await tbrgNotifyJobProgress(finishedEmbedPayload);
+    await tbrgRenderPageProgress(progressTabId, finishedEmbedPayload);
+
+    return {
+      templateId: template.id,
+      executionResult,
+      download: null,
+      screenshotDownloads,
+      embedOpened: true
+    };
+  }
+
   let externalSlidesHtml = '';
   const slidesCandidatePaths = [];
   if (typeof template.slidesHtmlFileResolved === 'string' && template.slidesHtmlFileResolved.trim()) {
@@ -988,6 +1023,46 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     tbrgSaveCustomTemplateText(message.templateText || '')
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === 'TBRG_DOWNLOAD_URL') {
+    const url = typeof message.url === 'string' ? message.url.trim() : '';
+    const downloadBasename = typeof message.downloadBasename === 'string' ? message.downloadBasename.trim() : '';
+    const extRaw = typeof message.downloadFileExtension === 'string' ? message.downloadFileExtension.trim() : '';
+    const ext = extRaw.replace(/^\.+/, '');
+    if (!url.startsWith('https://')) {
+      sendResponse({ ok: false, error: 'URL must use https.' });
+      return false;
+    }
+    try {
+      // Validate URL shape.
+      new URL(url);
+    } catch (_error) {
+      sendResponse({ ok: false, error: 'Invalid URL.' });
+      return false;
+    }
+    if (ext && !/^[a-zA-Z0-9]{1,15}$/.test(ext)) {
+      sendResponse({ ok: false, error: 'Invalid downloadFileExtension.' });
+      return false;
+    }
+    const safeBase = (downloadBasename || 'download').replace(/[^\w\-]+/g, '_');
+    const filename = ext ? `${safeBase}-${Date.now()}.${ext}` : `${safeBase}-${Date.now()}`;
+    chrome.downloads.download(
+      {
+        url,
+        filename,
+        saveAs: false,
+        conflictAction: 'uniquify'
+      },
+      () => {
+        if (chrome.runtime.lastError) {
+          sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        sendResponse({ ok: true, filename });
+      }
+    );
     return true;
   }
 

@@ -2,7 +2,7 @@ const TBRG_CUSTOM_TEMPLATE_STORAGE_KEY = 'tbrg.customTemplateText';
 const TBRG_SELECTED_TEMPLATE_STORAGE_KEY = 'tbrg.selectedTemplateId';
 const TBRG_TEMPLATE_INDEX_FILE = 'templates/index.json';
 
-const TBRG_ALLOWED_STEP_TYPES = new Set(['text', 'csv', 'waitFor', 'image', 'dom']);
+const TBRG_ALLOWED_STEP_TYPES = new Set(['text', 'csv', 'waitFor', 'image', 'dom', 'network']);
 
 async function tbrgFetchText(relativePath) {
   const response = await fetch(chrome.runtime.getURL(relativePath), { cache: 'no-store' });
@@ -217,6 +217,40 @@ function tbrgValidateStep(step, templateId, source, path) {
     }
   }
 
+  if (type === 'network') {
+    if (operator !== 'saveUrl') {
+      throw new Error(`Template "${templateId}" step "${step.id}" network supports only operator "saveUrl" in ${source}.`);
+    }
+    const urlRaw = typeof step.url === 'string' ? step.url.trim() : '';
+    if (!urlRaw) {
+      throw new Error(`Template "${templateId}" network.saveUrl step "${step.id}" requires "url" in ${source}.`);
+    }
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(urlRaw);
+    } catch (_error) {
+      throw new Error(`Template "${templateId}" network.saveUrl step "${step.id}" has invalid "url" in ${source}.`);
+    }
+    if (parsedUrl.protocol !== 'https:') {
+      throw new Error(`Template "${templateId}" network.saveUrl step "${step.id}" url must use https in ${source}.`);
+    }
+    if (Object.prototype.hasOwnProperty.call(step, 'downloadBasename') && typeof step.downloadBasename !== 'string') {
+      throw new Error(`Template "${templateId}" network.saveUrl step "${step.id}" has non-string "downloadBasename" in ${source}.`);
+    }
+    if (Object.prototype.hasOwnProperty.call(step, 'value') && typeof step.value !== 'string') {
+      throw new Error(`Template "${templateId}" network.saveUrl step "${step.id}" has non-string "value" in ${source}.`);
+    }
+    if (Object.prototype.hasOwnProperty.call(step, 'downloadFileExtension')) {
+      const rawExt = typeof step.downloadFileExtension === 'string' ? step.downloadFileExtension.trim() : '';
+      const ext = rawExt.replace(/^\.+/, '');
+      if (!/^[a-zA-Z0-9]{1,15}$/.test(ext)) {
+        throw new Error(
+          `Template "${templateId}" network.saveUrl step "${step.id}" has invalid "downloadFileExtension" (use letters/digits only, e.g. "json" or "csv") in ${source}.`
+        );
+      }
+    }
+  }
+
   if (Object.prototype.hasOwnProperty.call(step, 'timeoutMs')) {
     const timeoutMs = Number(step.timeoutMs);
     if (!(Number.isFinite(timeoutMs) && timeoutMs > 0)) {
@@ -248,7 +282,7 @@ function tbrgNormalizeDeckStyle(deckStyle, templateId, source) {
 function tbrgNormalizeEmbedUrl(templateId, embedUrlRaw, source) {
   const embedUrl = typeof embedUrlRaw === 'string' ? embedUrlRaw.trim() : '';
   if (!embedUrl) {
-    throw new Error(`Template "${templateId}" runMode "embed" requires non-empty "embedUrl" in ${source}.`);
+    throw new Error(`Template "${templateId}" requires non-empty "embedUrl" in ${source}.`);
   }
   if (!embedUrl.startsWith('https://')) {
     throw new Error(`Template "${templateId}" embedUrl must use https in ${source}.`);
@@ -369,10 +403,14 @@ function tbrgNormalizeTemplate(template, source) {
   const deckStyle = tbrgNormalizeDeckStyle(template.deckStyle, template.id, source);
   const slidesHtmlFileResolved = `templates/${template.id}/template.html`;
 
+  const embedUrlAfter =
+    runMode === 'embedAfter' ? tbrgNormalizeEmbedUrl(template.id, template.embedUrl, source) : '';
+
   return {
     id: template.id,
     name: template.name || template.id,
-    runMode: runMode || '',
+    runMode: runMode === 'embedAfter' ? 'embedAfter' : runMode || '',
+    embedUrl: embedUrlAfter,
     page: template.page || '',
     frameSelector: typeof template.frameSelector === 'string' ? template.frameSelector : '',
     frameUrlIncludes: typeof template.frameUrlIncludes === 'string' ? template.frameUrlIncludes : '',

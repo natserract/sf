@@ -1118,6 +1118,34 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
       return { ok: true, value: imageDataUrl };
     }
 
+    if (type === 'network' && operator === 'saveUrl') {
+      const url = typeof step.url === 'string' ? step.url.trim() : '';
+      const downloadBasename = typeof step.downloadBasename === 'string' ? step.downloadBasename.trim() : '';
+      const downloadFileExtension =
+        typeof step.downloadFileExtension === 'string' ? step.downloadFileExtension.trim() : '';
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage(
+          {
+            type: 'TBRG_DOWNLOAD_URL',
+            url,
+            downloadBasename,
+            downloadFileExtension
+          },
+          resolve
+        );
+      });
+      if (!response || response.ok !== true) {
+        throw new Error(response?.error || 'URL download failed.');
+      }
+      return {
+        ok: true,
+        value: {
+          filename: response.filename,
+          url
+        }
+      };
+    }
+
     throw new Error(`Unsupported step route: ${type}.${operator}`);
   }
 

@@ -1,6 +1,32 @@
 {
   "id": "data-extension-report",
   "name": "Data Extension Report",
-  "runMode": "embed",
-  "embedUrl": "https://mcx3dk6gqx05byn626r3yqc9-hl0.pub.sfmc-content.com/uxvby1dgw35"
+  "runMode": "embedAfter",
+  "embedUrl": "https://mcx3dk6gqx05byn626r3yqc9-hl0.pub.sfmc-content.com/uxvby1dgw35",
+  "tasks": [
+    {
+      "id": "setup_storage_embed",
+      "name": "Setup, download storage info, then embed",
+      "page": "https://mc.s12.exacttarget.com/cloud/#app/Setup/",
+      "frameUrlIncludes": "mc-setup.s12.marketingcloudapps.com",
+      "frameResolveTimeoutMs": 60000,
+      "steps": [
+        {
+          "type": "waitFor",
+          "operator": "exists",
+          "selector": "body",
+          "timeoutMs": 60000
+        },
+        {
+          "id": "storageInfoDownload",
+          "type": "network",
+          "operator": "saveUrl",
+          "value": "storageInfoDownload",
+          "url": "https://mc-setup.s12.marketingcloudapps.com/fuelapi/internal/v1/customobjects/storageInfo",
+          "downloadBasename": "mc-storage-info",
+          "downloadFileExtension": "csv"
+        }
+      ]
+    }
+  ]
 }
