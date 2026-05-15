@@ -12,6 +12,172 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
     return Date.now();
   }
 
+  const TBRG_AUTOMATION_HILITE_PANEL_ID = 'tbrg-automation-selector-panel';
+  const TBRG_AUTOMATION_HILITE_RING_ID = 'tbrg-automation-selector-ring';
+
+  let tbrgAutomationStepContext = null;
+  let tbrgAutomationLastAnnounceKey = '';
+  let tbrgAutomationLastAnnounceAt = 0;
+
+  function tbrgAutomationSetStepContext(ctx) {
+    tbrgAutomationStepContext = ctx && typeof ctx === 'object' ? ctx : null;
+  }
+
+  function tbrgAutomationRemoveDomHighlight() {
+    document.getElementById(TBRG_AUTOMATION_HILITE_PANEL_ID)?.remove();
+    document.getElementById(TBRG_AUTOMATION_HILITE_RING_ID)?.remove();
+  }
+
+  function tbrgEnsureAutomationHighlighterStyles() {
+    const id = 'tbrg-automation-dom-highlight-styles';
+    if (document.getElementById(id)) {
+      return;
+    }
+    const style = document.createElement('style');
+    style.id = id;
+    style.textContent = `
+      #${TBRG_AUTOMATION_HILITE_PANEL_ID} {
+        position: fixed;
+        left: 12px;
+        bottom: 12px;
+        max-width: min(560px, calc(100vw - 24px));
+        z-index: 2147483640;
+        background: rgba(15, 23, 42, 0.94);
+        color: #e2e8f0;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        line-height: 1.45;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+        pointer-events: none;
+      }
+      #${TBRG_AUTOMATION_HILITE_PANEL_ID} .tbrg-automation-dom-step {
+        color: #94a3b8;
+        margin-bottom: 6px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      #${TBRG_AUTOMATION_HILITE_PANEL_ID} .tbrg-automation-dom-sel {
+        color: #7dd3fc;
+        word-break: break-all;
+        margin-bottom: 6px;
+      }
+      #${TBRG_AUTOMATION_HILITE_PANEL_ID} .tbrg-automation-dom-chain-label {
+        color: #94a3b8;
+        margin-bottom: 2px;
+      }
+      #${TBRG_AUTOMATION_HILITE_PANEL_ID} .tbrg-automation-dom-chain {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-all;
+        color: #bbf7d0;
+      }
+      #${TBRG_AUTOMATION_HILITE_RING_ID} {
+        position: fixed;
+        z-index: 2147483639;
+        border: 2px solid #22c55e;
+        border-radius: 4px;
+        box-sizing: border-box;
+        pointer-events: none;
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2) inset;
+      }
+    `;
+    document.documentElement.appendChild(style);
+  }
+
+  function tbrgCssEscapeForChain(value) {
+    if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+      return CSS.escape(value);
+    }
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+  }
+
+  function tbrgBuildSelectorChainFromElement(element) {
+    const chain = [];
+    let node = element;
+
+    while (node && node.nodeType === Node.ELEMENT_NODE && chain.length < 8) {
+      const tag = node.tagName.toLowerCase();
+      const idAttr = node.getAttribute('id');
+      if (idAttr) {
+        chain.unshift(`#${tbrgCssEscapeForChain(idAttr)}`);
+        break;
+      }
+
+      const dataTestId = node.getAttribute('data-testid') || node.getAttribute('data-test-id');
+      if (dataTestId) {
+        chain.unshift(`[data-testid="${dataTestId}"]`);
+        break;
+      }
+
+      if (node.getAttribute('role')) {
+        chain.unshift(`${tag}[role="${node.getAttribute('role')}"]`);
+      } else if (node.classList.length > 0) {
+        chain.unshift(`${tag}.${tbrgCssEscapeForChain(node.classList[0])}`);
+      } else {
+        chain.unshift(tag);
+      }
+
+      node = node.parentElement;
+    }
+
+    return chain.join(' > ');
+  }
+
+  function tbrgAutomationShowDomAccess(element, { selector, matchIndex } = {}) {
+    if (!(element instanceof Element)) {
+      return;
+    }
+    const idx = tbrgNormalizeMatchIndex(matchIndex);
+    const sel = typeof selector === 'string' ? selector : '';
+    const dedupeKey = `${sel}|${idx}|${tbrgAutomationStepContext?.type || ''}|${tbrgAutomationStepContext?.operator || ''}`;
+    const now = Date.now();
+    if (dedupeKey === tbrgAutomationLastAnnounceKey && now - tbrgAutomationLastAnnounceAt < 150) {
+      return;
+    }
+    tbrgAutomationLastAnnounceKey = dedupeKey;
+    tbrgAutomationLastAnnounceAt = now;
+
+    tbrgEnsureAutomationHighlighterStyles();
+    tbrgAutomationRemoveDomHighlight();
+
+    const chain = tbrgBuildSelectorChainFromElement(element) || element.tagName?.toLowerCase() || '(unknown)';
+    const ctx = tbrgAutomationStepContext;
+    const stepLine = ctx ? [ctx.type, ctx.operator, ctx.id].filter(Boolean).join(' · ') : 'Automation';
+
+    const panel = tbrgCreateEl('div', { id: TBRG_AUTOMATION_HILITE_PANEL_ID }, []);
+    panel.appendChild(tbrgCreateEl('div', { class: 'tbrg-automation-dom-step', text: `DOM — ${stepLine}` }));
+    panel.appendChild(
+      tbrgCreateEl('div', {
+        class: 'tbrg-automation-dom-sel',
+        text: `Selector: ${sel || '(n/a)'}  ·  matchIndex: ${idx}`
+      })
+    );
+    panel.appendChild(tbrgCreateEl('div', { class: 'tbrg-automation-dom-chain-label', text: 'Selector chain (ancestor → target):' }));
+    panel.appendChild(tbrgCreateEl('pre', { class: 'tbrg-automation-dom-chain', text: chain }));
+
+    document.documentElement.appendChild(panel);
+
+    try {
+      const rect = element.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        const ring = tbrgCreateEl('div', { id: TBRG_AUTOMATION_HILITE_RING_ID }, []);
+        Object.assign(ring.style, {
+          left: `${rect.left}px`,
+          top: `${rect.top}px`,
+          width: `${rect.width}px`,
+          height: `${rect.height}px`
+        });
+        document.documentElement.appendChild(ring);
+      }
+    } catch (_e) {
+      // Ring is optional.
+    }
+  }
+
   function tbrgToDisplayString(value) {
     if (value == null) {
       return '';
@@ -431,6 +597,7 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
     if (!element) {
       throw new Error(`Selector not found: ${selector} (matchIndex ${idx}, found ${elements.length})`);
     }
+    tbrgAutomationShowDomAccess(element, { selector, matchIndex: idx });
     return element;
   }
 
@@ -456,6 +623,59 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
     );
   }
 
+  /**
+   * Some SPAs (Angular, etc.) ignore HTMLElement.click(); dispatch pointer/mouse events at element center.
+   */
+  function tbrgDispatchSyntheticPointerClick(element) {
+    if (!(element instanceof Element)) {
+      return;
+    }
+    const rect = element.getBoundingClientRect();
+    const cx = Math.min(Math.max(rect.left + rect.width / 2, rect.left + 1), rect.right - 1);
+    const cy = Math.min(Math.max(rect.top + rect.height / 2, rect.top + 1), rect.bottom - 1);
+    const common = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window,
+      clientX: cx,
+      clientY: cy,
+      button: 0,
+      buttons: 1
+    };
+
+    try {
+      if (typeof element.focus === 'function') {
+        element.focus({ preventScroll: true });
+      }
+    } catch (_e) {
+      // ignore
+    }
+
+    const fire = (Ctor, type, extra = {}) => {
+      try {
+        element.dispatchEvent(new Ctor(type, { ...common, ...extra }));
+      } catch (_e) {
+        // ignore
+      }
+    };
+
+    if (typeof PointerEvent === 'function') {
+      fire(PointerEvent, 'pointerover', { pointerId: 1, pointerType: 'mouse', isPrimary: true });
+      fire(PointerEvent, 'pointerenter', { pointerId: 1, pointerType: 'mouse', isPrimary: true });
+    }
+    fire(MouseEvent, 'mouseover', {});
+    fire(MouseEvent, 'mousedown', {});
+    if (typeof PointerEvent === 'function') {
+      fire(PointerEvent, 'pointerdown', { pointerId: 1, pointerType: 'mouse', isPrimary: true });
+    }
+    fire(MouseEvent, 'mouseup', { buttons: 0 });
+    if (typeof PointerEvent === 'function') {
+      fire(PointerEvent, 'pointerup', { pointerId: 1, pointerType: 'mouse', isPrimary: true });
+    }
+    fire(MouseEvent, 'click', {});
+  }
+
   async function tbrgWaitForSelector(selector, timeoutMs, matchIndex = 0, waitOptions = {}) {
     const requireVisible = waitOptions.requireVisible === true;
     const idx = tbrgNormalizeMatchIndex(matchIndex);
@@ -465,6 +685,7 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
       if (elements.length > idx) {
         const candidate = elements[idx];
         if (!requireVisible || tbrgIsElementVisible(candidate)) {
+          tbrgAutomationShowDomAccess(candidate, { selector, matchIndex: idx });
           return candidate;
         }
       }
@@ -913,6 +1134,12 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
     const type = String(step.type || '').trim();
     const operator = String(step.operator || '').trim();
 
+    tbrgAutomationSetStepContext({
+      id: typeof step.id === 'string' ? step.id.trim() : '',
+      type,
+      operator
+    });
+
     if (type === 'text' && operator === 'input') {
       const stepId = String(step.id || '').trim();
       if (!stepId) {
@@ -1068,6 +1295,60 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
       return { ok: true, value: true };
     }
 
+    if (type === 'dom' && operator === 'hover') {
+      const requireVisible = step.requireVisible === true;
+      const idx = Number.isFinite(Number(matchIndex)) ? Number(matchIndex) : 0;
+      await tbrgWaitForSelector(step.selector, timeoutMs, idx, { requireVisible });
+      const el = tbrgGetElement(step.selector, idx);
+      try {
+        el.dispatchEvent(
+          new MouseEvent('mouseenter', { bubbles: true, cancelable: true, view: window })
+        );
+        el.dispatchEvent(
+          new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window })
+        );
+      } catch (_error) {
+        throw new Error('dom.hover could not dispatch pointer events on the target element.');
+      }
+      const hoverSettleMs = Number(step.hoverSettleMs) > 0 ? Number(step.hoverSettleMs) : 250;
+      await new Promise((resolve) => setTimeout(resolve, hoverSettleMs));
+      return { ok: true, value: true };
+    }
+
+    if (type === 'dom' && operator === 'click') {
+      const requireVisible = step.requireVisible === true;
+      const idx = Number.isFinite(Number(matchIndex)) ? Number(matchIndex) : 0;
+      await tbrgWaitForSelector(step.selector, timeoutMs, idx, { requireVisible });
+      const el = tbrgGetElement(step.selector, idx);
+      try {
+        el.scrollIntoView({ block: 'center', inline: 'nearest' });
+      } catch (_error) {
+        // Best effort before click.
+      }
+      const preClickDelayMs = Number(step.preClickDelayMs) > 0 ? Number(step.preClickDelayMs) : 0;
+      if (preClickDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, preClickDelayMs));
+      }
+      const clickDispatch =
+        typeof step.clickDispatch === 'string' ? step.clickDispatch.trim().toLowerCase() : 'native';
+      if (clickDispatch === 'synthetic') {
+        tbrgDispatchSyntheticPointerClick(el);
+      } else if (clickDispatch === 'both') {
+        tbrgDispatchSyntheticPointerClick(el);
+        if (typeof el.click === 'function') {
+          el.click();
+        }
+      } else {
+        if (typeof el.click !== 'function') {
+          throw new Error('dom.click target has no click() method.');
+        }
+        el.click();
+      }
+      const postClickDelayMs = Number(step.postClickDelayMs) > 0 ? Number(step.postClickDelayMs) : 500;
+      await new Promise((resolve) => setTimeout(resolve, postClickDelayMs));
+      return { ok: true, value: true };
+    }
+
     if (type === 'dom' && operator === 'readText') {
       const requireVisible = step.requireVisible === true;
       await tbrgWaitForSelector(step.selector, timeoutMs, matchIndex, { requireVisible });
@@ -1149,7 +1430,35 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
     throw new Error(`Unsupported step route: ${type}.${operator}`);
   }
 
-  async function tbrgExecuteTemplate(template) {
+  function tbrgMaybeReportStepProgress(progressReporting, stepResults) {
+    if (!progressReporting || typeof progressReporting !== 'object') {
+      return;
+    }
+    const offset = Number(progressReporting.completedStepsOffset) || 0;
+    const totalOverall = Number(progressReporting.totalStepsOverall) || 0;
+    const okCount = stepResults.filter((entry) => entry.ok).length;
+    const completedSteps = offset + okCount;
+    const lastOk = stepResults.filter((entry) => entry.ok).slice(-1)[0];
+    try {
+      chrome.runtime.sendMessage({
+        type: 'TBRG_JOB_STEP_PROGRESS',
+        stage: 'running',
+        templateId: progressReporting.templateId,
+        progressTabId: progressReporting.progressTabId,
+        completedTasks: Number(progressReporting.completedTasks) || 0,
+        totalTasks: Number(progressReporting.totalTasks) || 0,
+        completedSteps,
+        totalSteps: totalOverall,
+        lastCompletedStepId: lastOk?.id || null,
+        currentTaskId: progressReporting.currentTaskId || null,
+        currentTaskName: progressReporting.currentTaskName || null
+      });
+    } catch (_error) {
+      // Background may be unavailable; progress is best-effort.
+    }
+  }
+
+  async function tbrgExecuteTemplate(template, progressReporting) {
     const results = {};
     const stepResults = [];
     const taskResults = [];
@@ -1160,55 +1469,62 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
       )
       : template.steps;
 
-    for (const step of stepsToRun) {
-      const startedAt = tbrgNow();
-      try {
-        const stepResult = await tbrgRunStep(step, results);
-        const valueKey = typeof step.value === 'string' ? step.value.trim() : '';
-        if (valueKey) {
-          results[valueKey] = stepResult.value;
+    try {
+      for (const step of stepsToRun) {
+        const startedAt = tbrgNow();
+        try {
+          const stepResult = await tbrgRunStep(step, results);
+          const valueKey = typeof step.value === 'string' ? step.value.trim() : '';
+          if (valueKey) {
+            results[valueKey] = stepResult.value;
+          }
+          stepResults.push({
+            id: step.id,
+            value: valueKey || null,
+            taskId: step.__taskId || null,
+            durationMs: tbrgNow() - startedAt,
+            ...stepResult
+          });
+        } catch (error) {
+          stepResults.push({
+            id: step.id,
+            value: typeof step.value === 'string' ? step.value.trim() || null : null,
+            taskId: step.__taskId || null,
+            durationMs: tbrgNow() - startedAt,
+            ok: false,
+            error: error.message || String(error)
+          });
+          if (stopOnFailure) {
+            tbrgMaybeReportStepProgress(progressReporting, stepResults);
+            break;
+          }
         }
-        stepResults.push({
-          id: step.id,
-          value: valueKey || null,
-          taskId: step.__taskId || null,
-          durationMs: tbrgNow() - startedAt,
-          ...stepResult
-        });
-      } catch (error) {
-        stepResults.push({
-          id: step.id,
-          value: typeof step.value === 'string' ? step.value.trim() || null : null,
-          taskId: step.__taskId || null,
-          durationMs: tbrgNow() - startedAt,
-          ok: false,
-          error: error.message || String(error)
-        });
-        if (stopOnFailure) {
-          break;
+        tbrgMaybeReportStepProgress(progressReporting, stepResults);
+      }
+
+      if (Array.isArray(template.tasks)) {
+        for (const task of template.tasks) {
+          const relatedSteps = stepResults.filter((stepResult) => stepResult.taskId === (task.id || 'task'));
+          taskResults.push({
+            id: task.id || 'task',
+            ok: relatedSteps.every((stepResult) => stepResult.ok),
+            steps: relatedSteps
+          });
         }
       }
-    }
 
-    if (Array.isArray(template.tasks)) {
-      for (const task of template.tasks) {
-        const relatedSteps = stepResults.filter((stepResult) => stepResult.taskId === (task.id || 'task'));
-        taskResults.push({
-          id: task.id || 'task',
-          ok: relatedSteps.every((stepResult) => stepResult.ok),
-          steps: relatedSteps
-        });
-      }
+      return {
+        ok: true,
+        url: location.href,
+        title: document.title,
+        results,
+        stepResults,
+        taskResults
+      };
+    } finally {
+      tbrgAutomationRemoveDomHighlight();
+      tbrgAutomationSetStepContext(null);
     }
-
-    return {
-      ok: true,
-      url: location.href,
-      title: document.title,
-      results,
-      stepResults,
-      taskResults
-    };
   }
 
   self.__TBRG_MESSAGE_HANDLER__ = (message, _sender, sendResponse) => {
@@ -1216,7 +1532,7 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
       return false;
     }
 
-    tbrgExecuteTemplate(message.template)
+    tbrgExecuteTemplate(message.template, message.progressReporting)
       .then((result) => sendResponse(result))
       .catch((error) => {
         sendResponse({

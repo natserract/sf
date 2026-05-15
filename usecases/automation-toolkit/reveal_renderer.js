@@ -36,13 +36,30 @@ function tbrgToInterpolatedText(value) {
 }
 
 function tbrgInterpolate(templateText, resultMap) {
-  return String(templateText).replace(/\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/g, (_match, key) => {
-    const value = resultMap[key];
+  const map = resultMap && typeof resultMap === 'object' ? resultMap : {};
+  return String(templateText).replace(/\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/g, (match, key) => {
+    if (!Object.prototype.hasOwnProperty.call(map, key)) {
+      return match;
+    }
+    const value = map[key];
     if (typeof value === 'string' && value.startsWith('data:image/')) {
       return `<img src="${value}" alt="${tbrgEscapeHtml(key)}" style="max-width: 100%; max-height: 480px;" />`;
     }
     return tbrgEscapeHtml(tbrgToInterpolatedText(value));
   });
+}
+
+function tbrgMergeDeckPlaceholders(resultMap, template) {
+  const base = resultMap && typeof resultMap === 'object' ? { ...resultMap } : {};
+  const now = new Date();
+  const monthLong = now.toLocaleString('en-US', { month: 'long' });
+  base.MONTH = String(monthLong || '').toUpperCase();
+  base.YEAR = String(now.getFullYear());
+  const titleFromTemplate = typeof template?.name === 'string' && template.name.trim() ? template.name.trim() : '';
+  if (!Object.prototype.hasOwnProperty.call(base, 'REPORT_TITLE') && titleFromTemplate) {
+    base.REPORT_TITLE = titleFromTemplate;
+  }
+  return base;
 }
 
 function tbrgBuildDefaultSlides(resultMap) {
@@ -160,8 +177,21 @@ function tbrgBuildScopedDeckCss(scopeClass, template) {
 
 function tbrgBuildRevealDeckHtml(template, resultMap, externalSlidesHtml = '') {
   const title = template.name || template.id;
-  const externalMarkup = tbrgRenderExternalSlidesHtml(externalSlidesHtml, resultMap);
-  const slideMarkup = externalMarkup || tbrgRenderSlides(template, resultMap);
+  const merged = tbrgMergeDeckPlaceholders(resultMap || {}, template);
+  const rawExternal = String(externalSlidesHtml || '').trim();
+
+  if (template.deckMode === 'full' && rawExternal) {
+    let html = tbrgInterpolate(rawExternal, merged);
+    const extra = typeof template.deckCss === 'string' ? template.deckCss.trim() : '';
+    if (extra && html.includes('</head>')) {
+      const block = `<style id="tbrg-template-extra-css">\n${extra}\n</style>\n`;
+      html = html.replace('</head>', `${block}</head>`);
+    }
+    return html;
+  }
+
+  const externalMarkup = tbrgRenderExternalSlidesHtml(externalSlidesHtml, merged);
+  const slideMarkup = externalMarkup || tbrgRenderSlides(template, merged);
   const templateScopeClass = `theme-${tbrgSanitizeClassNamePart(template.id, 'template')}`;
   const scopedCss = tbrgBuildScopedDeckCss(templateScopeClass, template);
 

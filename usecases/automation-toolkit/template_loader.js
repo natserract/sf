@@ -148,29 +148,60 @@ function tbrgValidateStep(step, templateId, source, path) {
   }
 
   if (type === 'dom') {
-    if (operator !== 'readText') {
-      throw new Error(`Template "${templateId}" step "${step.id}" dom supports only operator "readText" in ${source}.`);
-    }
-    if (!stepValue) {
-      throw new Error(`Template "${templateId}" step "${step.id}" requires non-empty "value" in ${source}.`);
+    if (operator !== 'readText' && operator !== 'hover' && operator !== 'click') {
+      throw new Error(
+        `Template "${templateId}" step "${step.id}" dom supports operators "readText", "hover", and "click" in ${source}.`
+      );
     }
     if (typeof step.selector !== 'string' || !step.selector.trim()) {
-      throw new Error(`Template "${templateId}" dom.readText step "${step.id}" requires "selector" in ${source}.`);
+      throw new Error(`Template "${templateId}" dom.${operator} step "${step.id}" requires "selector" in ${source}.`);
     }
     if (Object.prototype.hasOwnProperty.call(step, 'requireVisible') && typeof step.requireVisible !== 'boolean') {
-      throw new Error(`Template "${templateId}" dom.readText step "${step.id}" has non-boolean "requireVisible" in ${source}.`);
-    }
-    if (Object.prototype.hasOwnProperty.call(step, 'textMode')) {
-      const tm = typeof step.textMode === 'string' ? step.textMode.trim() : '';
-      if (tm !== 'innerText' && tm !== 'textContent') {
-        throw new Error(`Template "${templateId}" dom.readText step "${step.id}" has invalid "textMode" (use "innerText" or "textContent") in ${source}.`);
-      }
+      throw new Error(`Template "${templateId}" dom.${operator} step "${step.id}" has non-boolean "requireVisible" in ${source}.`);
     }
     if (
       Object.prototype.hasOwnProperty.call(step, 'matchIndex') &&
       !(Number.isFinite(Number(step.matchIndex)) && Number(step.matchIndex) >= 0)
     ) {
-      throw new Error(`Template "${templateId}" dom.readText step "${step.id}" has invalid "matchIndex" in ${source}.`);
+      throw new Error(`Template "${templateId}" dom.${operator} step "${step.id}" has invalid "matchIndex" in ${source}.`);
+    }
+
+    if (operator === 'click') {
+      if (Object.prototype.hasOwnProperty.call(step, 'clickDispatch')) {
+        const cd = typeof step.clickDispatch === 'string' ? step.clickDispatch.trim().toLowerCase() : '';
+        if (cd !== 'native' && cd !== 'synthetic' && cd !== 'both') {
+          throw new Error(
+            `Template "${templateId}" dom.click step "${step.id}" has invalid "clickDispatch" (use "native", "synthetic", or "both") in ${source}.`
+          );
+        }
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(step, 'preClickDelayMs') &&
+        !(Number.isFinite(Number(step.preClickDelayMs)) && Number(step.preClickDelayMs) >= 0)
+      ) {
+        throw new Error(
+          `Template "${templateId}" dom.click step "${step.id}" has invalid "preClickDelayMs" in ${source}.`
+        );
+      }
+    }
+
+    if (operator === 'readText') {
+      if (!stepValue) {
+        throw new Error(`Template "${templateId}" step "${step.id}" requires non-empty "value" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'textMode')) {
+        const tm = typeof step.textMode === 'string' ? step.textMode.trim() : '';
+        if (tm !== 'innerText' && tm !== 'textContent') {
+          throw new Error(`Template "${templateId}" dom.readText step "${step.id}" has invalid "textMode" (use "innerText" or "textContent") in ${source}.`);
+        }
+      }
+    } else {
+      if (stepValue) {
+        throw new Error(`Template "${templateId}" dom.${operator} step "${step.id}" must not define "value" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'textMode')) {
+        throw new Error(`Template "${templateId}" dom.${operator} step "${step.id}" must not define "textMode" in ${source}.`);
+      }
     }
   }
 
@@ -334,6 +365,7 @@ function tbrgNormalizeTemplate(template, source) {
       deckCss: '',
       slideLayouts: null,
       slidesHtmlFileResolved: '',
+      deckMode: '',
       source
     };
   }
@@ -402,6 +434,7 @@ function tbrgNormalizeTemplate(template, source) {
   }
   const deckStyle = tbrgNormalizeDeckStyle(template.deckStyle, template.id, source);
   const slidesHtmlFileResolved = `templates/${template.id}/template.html`;
+  const deckMode = template.deckMode === 'full' ? 'full' : '';
 
   const embedUrlAfter =
     runMode === 'embedAfter' ? tbrgNormalizeEmbedUrl(template.id, template.embedUrl, source) : '';
@@ -423,6 +456,7 @@ function tbrgNormalizeTemplate(template, source) {
     deckCss,
     slideLayouts,
     slidesHtmlFileResolved,
+    deckMode,
     source
   };
 }

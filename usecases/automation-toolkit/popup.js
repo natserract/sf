@@ -2,10 +2,12 @@ const templateSelectEl = document.getElementById('templateSelect');
 const templateMetaEl = document.getElementById('templateMeta');
 const runButtonEl = document.getElementById('runButton');
 const stopButtonEl = document.getElementById('stopButton');
-const closePopupButtonEl = document.getElementById('closePopupButton');
 const statusBoxEl = document.getElementById('statusBox');
 const debugModeToggleEl = document.getElementById('debugModeToggle');
+const exportDebugLogButtonEl = document.getElementById('exportDebugLogButton');
+const clearDebugLogButtonEl = document.getElementById('clearDebugLogButton');
 const domPickerCardEl = document.getElementById('domPickerCard');
+const debugLogSectionEl = document.getElementById('debugLogSection');
 const pickElementButtonEl = document.getElementById('pickElementButton');
 const pickerPreviewEl = document.getElementById('pickerPreview');
 const insertTextStepButtonEl = document.getElementById('insertTextStepButton');
@@ -241,6 +243,7 @@ function setDebugModeEnabled(enabled) {
   const on = Boolean(enabled);
   debugModeToggleEl.checked = on;
   domPickerCardEl.style.display = on ? 'block' : 'none';
+  debugLogSectionEl.style.display = on ? 'block' : 'none';
   if (!on) {
     setPickedElement(null);
   }
@@ -273,10 +276,10 @@ async function pickElementFromPage() {
     }
 
     setPickedElement(response.pick);
-    const debugFileLine = response.debugJsonFilename
-      ? `\nDebug JSON downloaded: ${response.debugJsonFilename}`
+    const hint = response.debugExportPathHint
+      ? ` Log appended (export path under Downloads: ${response.debugExportPathHint}).`
       : '';
-    setStatus(`Element captured. Use insert button to add JSON snippet.${debugFileLine}`, 'success');
+    setStatus(`Element captured. Use insert button to add JSON snippet.${hint}`, 'success');
   } catch (error) {
     setStatus(error.message || 'Element pick failed.', 'error');
   } finally {
@@ -430,6 +433,30 @@ templateSelectEl.addEventListener('change', async () => {
 
 debugModeToggleEl.addEventListener('change', () => setDebugModeEnabled(debugModeToggleEl.checked));
 
+exportDebugLogButtonEl.addEventListener('click', async () => {
+  try {
+    const response = await sendMessage({ type: 'TBRG_DEBUG_EXPORT_LOG' }, 30000);
+    if (!response.ok) {
+      throw new Error(response.error || 'Export failed.');
+    }
+    setStatus(`Debug log exported to Downloads: ${response.filename}`, 'success');
+  } catch (error) {
+    setStatus(error.message || 'Export failed.', 'error');
+  }
+});
+
+clearDebugLogButtonEl.addEventListener('click', async () => {
+  try {
+    const response = await sendMessage({ type: 'TBRG_DEBUG_CLEAR_LOG' }, 30000);
+    if (!response.ok) {
+      throw new Error(response.error || 'Clear failed.');
+    }
+    setStatus('Debug log cleared (in extension storage).', 'success');
+  } catch (error) {
+    setStatus(error.message || 'Clear failed.', 'error');
+  }
+});
+
 pickElementButtonEl.addEventListener('click', pickElementFromPage);
 insertTextStepButtonEl.addEventListener('click', () => insertStepFromPick('waitFor'));
 insertScreenshotStepButtonEl.addEventListener('click', () => insertStepFromPick('image'));
@@ -438,7 +465,6 @@ stopButtonEl.addEventListener('click', () => {
   stopAutomation();
   window.close();
 });
-closePopupButtonEl.addEventListener('click', () => window.close());
 
 setPickedElement(null);
 setIdleProgressUi();

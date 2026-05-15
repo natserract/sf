@@ -190,7 +190,6 @@
 
   <button id="runButton" type="button" style="margin: 10px 0;">Run</button>
   <button id="stopButton" type="button" class="secondary">Stop automation</button>
-  <button id="closePopupButton" type="button" class="secondary">Close panel</button>
 
   <div class="card progress-wrap">
     <div class="progress-meta">
@@ -208,7 +207,14 @@
       <label for="debugModeToggle" style="margin: 0;">Debug mode</label>
       <input id="debugModeToggle" type="checkbox" />
     </div>
-    <div class="muted">When enabled, shows the DOM picker tools.</div>
+    <div id="debugLogSection" style="display: none;">
+      <div class="muted">When enabled, records clicks, inputs, tab URLs, and DOM picks into one session log (exported
+        when you turn debug off or use Export).</div>
+      <div class="button-row" style="margin-top: 10px;">
+        <button id="exportDebugLogButton" type="button" class="secondary">Export log now</button>
+        <button id="clearDebugLogButton" type="button" class="secondary">Clear log</button>
+      </div>
+    </div>
   </div>
 
   <div class="card" id="domPickerCard" style="display: none;">

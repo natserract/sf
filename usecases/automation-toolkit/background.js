@@ -2,6 +2,15 @@ importScripts('vendor/js-yaml.min.js', 'template_loader.js', 'reveal_renderer.js
 
 const TBRG_USER_INPUT_TIMEOUT_MS = 15 * 60 * 1000;
 let tbrgRunGeneration = 0;
+/** When true, debug DOM activity is not appended (avoids logging automated clicks/hovers as user exploration). */
+let tbrgAutomationJobInProgress = false;
+
+const TBRG_DEBUG_MODE_STORAGE_KEY = 'tbrg.debugModeEnabled';
+const TBRG_DEBUG_DOM_LOG_KEY = 'tbrg.debugDomActivityLog';
+const TBRG_DEBUG_EXPORT_RELATIVE_PATH = 'automation-toolkit-debug/dom-activity-log.json';
+const TBRG_DEBUG_SCHEMA_VERSION = 1;
+const TBRG_DEBUG_MAX_EVENTS = 2000;
+const TBRG_DEBUG_RECORDER_SCRIPT_ID = 'tbrg_debug_dom_recorder';
 
 function tbrgStoppedError() {
   const error = new Error('Automation stopped by user.');
@@ -129,7 +138,7 @@ function tbrgPickStepsArray(template) {
   return Array.isArray(template.steps) ? template.steps : [];
 }
 
-async function tbrgExecuteTasksSequentially(template, onProgress, runGeneration) {
+async function tbrgExecuteTasksSequentially(template, onProgress, runGeneration, progressTabId) {
   const merged = {
     ok: true,
     results: {},
@@ -142,8 +151,14 @@ async function tbrgExecuteTasksSequentially(template, onProgress, runGeneration)
   const totalTasks = template.tasks.length;
   let completedTasks = 0;
   let completedSteps = 0;
+  const totalStepsAll = template.tasks.reduce(
+    (acc, t) => acc + (Array.isArray(t.steps) ? t.steps.length : 0),
+    0
+  );
 
   for (const task of template.tasks) {
+    const stepsOffsetBeforeTask = completedSteps;
+    const tasksFinishedBefore = completedTasks;
     tbrgAssertRunActive(runGeneration);
     const pageForNav = tbrgEffectivePageForTask(template, task);
     const targetTab = await tbrgEnsureTargetPage({ ...template, page: pageForNav });
@@ -159,7 +174,17 @@ async function tbrgExecuteTasksSequentially(template, onProgress, runGeneration)
     tbrgAssertRunActive(runGeneration);
     const partial = await tbrgSendTabMessageWithFrameBootstrap(targetTab.id, targetFrameId, {
       type: 'TBRG_EXECUTE_TEMPLATE',
-      template: { tasks: [task], slides: [] }
+      template: { tasks: [task], slides: [] },
+      progressReporting: {
+        templateId: template.id,
+        progressTabId,
+        completedStepsOffset: stepsOffsetBeforeTask,
+        totalStepsOverall: totalStepsAll,
+        completedTasks: tasksFinishedBefore,
+        totalTasks,
+        currentTaskId: task.id || null,
+        currentTaskName: task.name || null
+      }
     }, TBRG_USER_INPUT_TIMEOUT_MS);
     tbrgAssertRunActive(runGeneration);
 
@@ -490,6 +515,66 @@ async function tbrgResolveTargetFrameId(tabId, template) {
   throw new Error(`Timed out resolving target iframe${waitedNote}`);
 }
 
+function tbrgMimeTypeForAssetFilename(filename) {
+  const lower = String(filename || '').toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.svg')) return 'image/svg+xml';
+  return 'application/octet-stream';
+}
+
+function tbrgUint8ArrayToBase64(bytes) {
+  let binary = '';
+  const len = bytes.length;
+  const chunk = 0x8000;
+  for (let i = 0; i < len; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunk, len)));
+  }
+  return btoa(binary);
+}
+
+async function tbrgFetchExtensionAssetBytes(relativePath) {
+  const response = await fetch(chrome.runtime.getURL(relativePath), { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`Failed to load extension asset: ${relativePath}`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+/**
+ * Replace src="assets/..." (and href=) with data URLs so downloaded single-file HTML decks still show images.
+ */
+async function tbrgInlineDeckRelativeAssets(html, templateId) {
+  const id = typeof templateId === 'string' && templateId.trim() ? templateId.trim() : '';
+  if (!id || typeof html !== 'string') {
+    return html;
+  }
+  const re = /(?:src|href)=(["'])assets\/([^"'#?]+)\1/gi;
+  const files = new Set();
+  let match;
+  while ((match = re.exec(html)) !== null) {
+    files.add(match[2]);
+  }
+  let out = html;
+  for (const file of files) {
+    const extPath = `templates/${id}/assets/${file}`;
+    try {
+      const bytes = await tbrgFetchExtensionAssetBytes(extPath);
+      const mime = tbrgMimeTypeForAssetFilename(file);
+      const dataUrl = `data:${mime};base64,${tbrgUint8ArrayToBase64(bytes)}`;
+      out = out.split(`src="assets/${file}"`).join(`src="${dataUrl}"`);
+      out = out.split(`src='assets/${file}'`).join(`src='${dataUrl}'`);
+      out = out.split(`href="assets/${file}"`).join(`href="${dataUrl}"`);
+      out = out.split(`href='assets/${file}'`).join(`href='${dataUrl}'`);
+    } catch (_error) {
+      // Missing asset: keep original relative path.
+    }
+  }
+  return out;
+}
+
 function tbrgDownloadDeck(html, templateId) {
   return new Promise((resolve, reject) => {
     const filename = `monthly-report-${templateId}-${Date.now()}.html`;
@@ -690,30 +775,242 @@ async function tbrgRenderPageProgress(tabId, payload) {
 
 const tbrgPendingPickerByTabId = new Map();
 
-function tbrgDownloadJsonDebugFile(payload, basename = 'picked-element-debug') {
+let tbrgDebugTabListenerAttached = false;
+
+function tbrgDebugOnTabUpdated(tabId, changeInfo, tab) {
+  if (typeof changeInfo.url !== 'string' || !/^https?:\/\//i.test(changeInfo.url)) {
+    return;
+  }
+  tbrgDebugAppendEvent({
+    type: 'navigation',
+    tabId,
+    url: changeInfo.url,
+    title: typeof tab?.title === 'string' ? tab.title : ''
+  }).catch(() => null);
+}
+
+function tbrgDebugAttachTabListener() {
+  if (tbrgDebugTabListenerAttached) {
+    return;
+  }
+  chrome.tabs.onUpdated.addListener(tbrgDebugOnTabUpdated);
+  tbrgDebugTabListenerAttached = true;
+}
+
+function tbrgDebugDetachTabListener() {
+  if (!tbrgDebugTabListenerAttached) {
+    return;
+  }
+  chrome.tabs.onUpdated.removeListener(tbrgDebugOnTabUpdated);
+  tbrgDebugTabListenerAttached = false;
+}
+
+async function tbrgDebugRegisterRecorder() {
+  const existing = await new Promise((resolve) => {
+    chrome.scripting.getRegisteredContentScripts({ ids: [TBRG_DEBUG_RECORDER_SCRIPT_ID] }, (scripts) => {
+      if (chrome.runtime.lastError) {
+        resolve([]);
+        return;
+      }
+      resolve(scripts || []);
+    });
+  });
+  if (Array.isArray(existing) && existing.length > 0) {
+    return;
+  }
+  await new Promise((resolve, reject) => {
+    chrome.scripting.registerContentScripts(
+      [
+        {
+          id: TBRG_DEBUG_RECORDER_SCRIPT_ID,
+          js: ['debug_dom_recorder.js'],
+          matches: ['<all_urls>'],
+          runAt: 'document_idle',
+          allFrames: true
+        }
+      ],
+      () => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve();
+      }
+    );
+  });
+}
+
+async function tbrgDebugUnregisterRecorder() {
+  await new Promise((resolve) => {
+    chrome.scripting.unregisterContentScripts({ ids: [TBRG_DEBUG_RECORDER_SCRIPT_ID] }, () => resolve());
+  });
+}
+
+async function tbrgDebugInjectRecorderIntoOpenTabs() {
+  let tabs = [];
+  try {
+    tabs = await chrome.tabs.query({ url: ['https://*/*', 'http://*/*'] });
+  } catch (_error) {
+    return;
+  }
+  for (const tab of tabs) {
+    if (!Number.isInteger(tab.id)) {
+      continue;
+    }
+    try {
+      await tbrgExecuteScript(tab.id, ['debug_dom_recorder.js'], true);
+    } catch (_error) {
+      // Restricted tab, no host access, etc.
+    }
+  }
+}
+
+async function tbrgDebugEnsureRecorderActive() {
+  await tbrgDebugRegisterRecorder();
+  await tbrgDebugInjectRecorderIntoOpenTabs();
+  tbrgDebugAttachTabListener();
+}
+
+async function tbrgDebugOnUserEnabledDebug() {
+  const fresh = {
+    schemaVersion: TBRG_DEBUG_SCHEMA_VERSION,
+    sessionStartedAt: new Date().toISOString(),
+    events: []
+  };
+  await new Promise((resolve) => {
+    chrome.storage.local.set({ [TBRG_DEBUG_DOM_LOG_KEY]: fresh }, resolve);
+  });
+  await tbrgDebugEnsureRecorderActive();
+}
+
+async function tbrgDebugOnUserDisabledDebug() {
+  tbrgDebugDetachTabListener();
+  try {
+    await tbrgDebugUnregisterRecorder();
+  } catch (_error) {
+    // Best effort.
+  }
+  const stored = await new Promise((resolve) => {
+    chrome.storage.local.get([TBRG_DEBUG_DOM_LOG_KEY], resolve);
+  });
+  const doc = stored[TBRG_DEBUG_DOM_LOG_KEY];
+  if (doc?.events?.length) {
+    try {
+      await tbrgExportDebugActivityLog(doc);
+    } catch (_error) {
+      // Best effort export on disable.
+    }
+  }
+}
+
+async function tbrgDebugAppendEvent(event) {
+  const stored = await new Promise((resolve) => {
+    chrome.storage.local.get([TBRG_DEBUG_MODE_STORAGE_KEY, TBRG_DEBUG_DOM_LOG_KEY], resolve);
+  });
+  if (!stored[TBRG_DEBUG_MODE_STORAGE_KEY]) {
+    return;
+  }
+  if (!tbrgDebugTabListenerAttached) {
+    tbrgDebugAttachTabListener();
+  }
+  let doc = stored[TBRG_DEBUG_DOM_LOG_KEY];
+  if (!doc || !Array.isArray(doc.events) || typeof doc.sessionStartedAt !== 'string') {
+    doc = {
+      schemaVersion: TBRG_DEBUG_SCHEMA_VERSION,
+      sessionStartedAt: new Date().toISOString(),
+      events: []
+    };
+  }
+  const ts = typeof event.ts === 'string' ? event.ts : new Date().toISOString();
+  const nextEvent = { ...event, ts };
+  const next = {
+    ...doc,
+    events: [...doc.events, nextEvent]
+  };
+  while (next.events.length > TBRG_DEBUG_MAX_EVENTS) {
+    next.events.shift();
+  }
+  await new Promise((resolve) => {
+    chrome.storage.local.set({ [TBRG_DEBUG_DOM_LOG_KEY]: next }, resolve);
+  });
+}
+
+function tbrgExportDebugActivityLog(doc) {
   return new Promise((resolve, reject) => {
-    const safeBase = (basename || 'picked-element-debug').replace(/[^\w\-]+/g, '_');
-    const filename = `${safeBase}-${Date.now()}.json`;
-    const jsonText = JSON.stringify(payload, null, 2);
+    if (!doc || !Array.isArray(doc.events)) {
+      reject(new Error('No debug log to export.'));
+      return;
+    }
+    const exportDoc = {
+      ...doc,
+      exportedAt: new Date().toISOString()
+    };
+    const jsonText = JSON.stringify(exportDoc, null, 2);
     const dataUrl = `data:application/json;charset=utf-8,${encodeURIComponent(jsonText)}`;
 
     chrome.downloads.download(
       {
         url: dataUrl,
-        filename,
+        filename: TBRG_DEBUG_EXPORT_RELATIVE_PATH,
         saveAs: false,
-        conflictAction: 'uniquify'
+        conflictAction: 'overwrite'
       },
       (downloadId) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
         }
-        resolve({ downloadId, filename });
+        resolve({ downloadId, filename: TBRG_DEBUG_EXPORT_RELATIVE_PATH });
       }
     );
   });
 }
+
+async function tbrgDebugClearLogKeepSession() {
+  const fresh = {
+    schemaVersion: TBRG_DEBUG_SCHEMA_VERSION,
+    sessionStartedAt: new Date().toISOString(),
+    events: []
+  };
+  await new Promise((resolve) => {
+    chrome.storage.local.set({ [TBRG_DEBUG_DOM_LOG_KEY]: fresh }, resolve);
+  });
+}
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local' || !changes[TBRG_DEBUG_MODE_STORAGE_KEY]) {
+    return;
+  }
+  const was = Boolean(changes[TBRG_DEBUG_MODE_STORAGE_KEY].oldValue);
+  const now = Boolean(changes[TBRG_DEBUG_MODE_STORAGE_KEY].newValue);
+  if (now && !was) {
+    tbrgDebugOnUserEnabledDebug().catch(() => null);
+    return;
+  }
+  if (!now && was) {
+    tbrgDebugOnUserDisabledDebug().catch(() => null);
+    return;
+  }
+  if (now) {
+    tbrgDebugEnsureRecorderActive().catch(() => null);
+  }
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.get([TBRG_DEBUG_MODE_STORAGE_KEY], (data) => {
+    if (data[TBRG_DEBUG_MODE_STORAGE_KEY]) {
+      tbrgDebugEnsureRecorderActive().catch(() => null);
+    }
+  });
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  chrome.storage.local.get([TBRG_DEBUG_MODE_STORAGE_KEY], (data) => {
+    if (data[TBRG_DEBUG_MODE_STORAGE_KEY]) {
+      tbrgDebugEnsureRecorderActive().catch(() => null);
+    }
+  });
+});
 
 async function tbrgStopDomPicker(tabId) {
   try {
@@ -847,171 +1144,206 @@ async function tbrgRunEmbedJob(template, runGeneration) {
 }
 
 async function tbrgRunJob(templateId, runGeneration) {
-  tbrgAssertRunActive(runGeneration);
-  const template = await tbrgResolveTemplateById(templateId);
-  tbrgAssertRunActive(runGeneration);
-  await tbrgSetSelectedTemplateId(template.id);
-  tbrgAssertRunActive(runGeneration);
-
-  if (template.runMode === 'embed') {
-    return await tbrgRunEmbedJob(template, runGeneration);
-  }
-
-  const { totalTasks, totalSteps } = tbrgCountTaskAndStepTotals(template);
-  const activeTab = await tbrgGetActiveTab();
-  const progressTabId = activeTab?.id;
-
-  const startedPayload = {
-    stage: 'started',
-    templateId: template.id,
-    completedTasks: 0,
-    totalTasks,
-    completedSteps: 0,
-    totalSteps
-  };
-  await tbrgNotifyJobProgress(startedPayload);
-  await tbrgRenderPageProgress(progressTabId, startedPayload);
-  tbrgAssertRunActive(runGeneration);
-
-  let executionResult;
-
-  if (Array.isArray(template.tasks) && template.tasks.length > 0) {
-    executionResult = await tbrgExecuteTasksSequentially(template, async (progress) => {
-      const payload = {
-        templateId: template.id,
-        totalTasks,
-        totalSteps,
-        ...progress
-      };
-      await tbrgNotifyJobProgress(payload);
-      await tbrgRenderPageProgress(progressTabId, payload);
-    }, runGeneration);
-  } else {
-    const stepsOnly = tbrgPickStepsArray(template);
-    if (!stepsOnly || stepsOnly.length === 0) {
-      throw new Error(`Template "${template.id}" has no executable steps.`);
-    }
-
-    const targetTab = await tbrgEnsureTargetPage(template);
+  tbrgAutomationJobInProgress = true;
+  try {
     tbrgAssertRunActive(runGeneration);
-    await tbrgExecuteScript(targetTab.id, ['content_runner.js'], true);
-    const targetFrameId = await tbrgResolveTargetFrameId(targetTab.id, template);
+    const template = await tbrgResolveTemplateById(templateId);
+    tbrgAssertRunActive(runGeneration);
+    await tbrgSetSelectedTemplateId(template.id);
     tbrgAssertRunActive(runGeneration);
 
-    await tbrgExecuteScriptInFrame(targetTab.id, ['content_runner.js'], targetFrameId);
-    executionResult = await tbrgSendTabMessageWithFrameBootstrap(targetTab.id, targetFrameId, {
-      type: 'TBRG_EXECUTE_TEMPLATE',
-      template
-    }, TBRG_USER_INPUT_TIMEOUT_MS);
-    tbrgAssertRunActive(runGeneration);
-
-    if (!executionResult?.ok) {
-      throw new Error(executionResult?.error || 'Content execution failed.');
+    if (template.runMode === 'embed') {
+      return await tbrgRunEmbedJob(template, runGeneration);
     }
 
-    const failedSteps = (executionResult.stepResults || []).filter((step) => !step.ok);
-    if (failedSteps.length > 0) {
-      const failedSummary = failedSteps
-        .slice(0, 3)
-        .map((step) => `${step.id || 'unknown'}: ${step.error || 'step failed'}`)
-        .join('; ');
-      throw new Error(
-        `Template execution failed (${failedSteps.length} step failure${failedSteps.length === 1 ? '' : 's'}): ${failedSummary}`
-      );
-    }
+    const { totalTasks, totalSteps } = tbrgCountTaskAndStepTotals(template);
+    const activeTab = await tbrgGetActiveTab();
+    const progressTabId = activeTab?.id;
 
-    const runningPayload = {
-      stage: 'running',
+    const startedPayload = {
+      stage: 'started',
       templateId: template.id,
-      completedTasks: totalTasks,
+      completedTasks: 0,
       totalTasks,
-      completedSteps: (executionResult.stepResults || []).filter((step) => step.ok).length,
-      totalSteps,
-      lastCompletedStepId: (executionResult.stepResults || []).filter((step) => step.ok).slice(-1)[0]?.id || null
+      completedSteps: 0,
+      totalSteps
     };
-    await tbrgNotifyJobProgress(runningPayload);
-    await tbrgRenderPageProgress(progressTabId, runningPayload);
-  }
-
-  tbrgAssertRunActive(runGeneration);
-  const screenshotDownloads = await tbrgDownloadScreenshotExports(template, executionResult.results);
-
-  if (template.runMode === 'embedAfter') {
+    await tbrgNotifyJobProgress(startedPayload);
+    await tbrgRenderPageProgress(progressTabId, startedPayload);
     tbrgAssertRunActive(runGeneration);
-    if (!Number.isInteger(progressTabId)) {
-      throw new Error('No active tab for embed overlay.');
+
+    let executionResult;
+
+    if (Array.isArray(template.tasks) && template.tasks.length > 0) {
+      executionResult = await tbrgExecuteTasksSequentially(template, async (progress) => {
+        const payload = {
+          templateId: template.id,
+          totalTasks,
+          totalSteps,
+          ...progress
+        };
+        await tbrgNotifyJobProgress(payload);
+        await tbrgRenderPageProgress(progressTabId, payload);
+      }, runGeneration, progressTabId);
+    } else {
+      const stepsOnly = tbrgPickStepsArray(template);
+      if (!stepsOnly || stepsOnly.length === 0) {
+        throw new Error(`Template "${template.id}" has no executable steps.`);
+      }
+
+      const targetTab = await tbrgEnsureTargetPage(template);
+      tbrgAssertRunActive(runGeneration);
+      await tbrgExecuteScript(targetTab.id, ['content_runner.js'], true);
+      const targetFrameId = await tbrgResolveTargetFrameId(targetTab.id, template);
+      tbrgAssertRunActive(runGeneration);
+
+      await tbrgExecuteScriptInFrame(targetTab.id, ['content_runner.js'], targetFrameId);
+      executionResult = await tbrgSendTabMessageWithFrameBootstrap(targetTab.id, targetFrameId, {
+        type: 'TBRG_EXECUTE_TEMPLATE',
+        template,
+        progressReporting: {
+          templateId: template.id,
+          progressTabId,
+          completedStepsOffset: 0,
+          totalStepsOverall: totalSteps,
+          completedTasks: 0,
+          totalTasks
+        }
+      }, TBRG_USER_INPUT_TIMEOUT_MS);
+      tbrgAssertRunActive(runGeneration);
+
+      if (!executionResult?.ok) {
+        throw new Error(executionResult?.error || 'Content execution failed.');
+      }
+
+      const failedSteps = (executionResult.stepResults || []).filter((step) => !step.ok);
+      if (failedSteps.length > 0) {
+        const failedSummary = failedSteps
+          .slice(0, 3)
+          .map((step) => `${step.id || 'unknown'}: ${step.error || 'step failed'}`)
+          .join('; ');
+        throw new Error(
+          `Template execution failed (${failedSteps.length} step failure${failedSteps.length === 1 ? '' : 's'}): ${failedSummary}`
+        );
+      }
+
+      const runningPayload = {
+        stage: 'running',
+        templateId: template.id,
+        completedTasks: totalTasks,
+        totalTasks,
+        completedSteps: (executionResult.stepResults || []).filter((step) => step.ok).length,
+        totalSteps,
+        lastCompletedStepId: (executionResult.stepResults || []).filter((step) => step.ok).slice(-1)[0]?.id || null
+      };
+      await tbrgNotifyJobProgress(runningPayload);
+      await tbrgRenderPageProgress(progressTabId, runningPayload);
     }
-    await tbrgShowEmbedOnTab(progressTabId, template);
+
+    tbrgAssertRunActive(runGeneration);
+    const screenshotDownloads = await tbrgDownloadScreenshotExports(template, executionResult.results);
+
+    if (template.runMode === 'embedAfter') {
+      tbrgAssertRunActive(runGeneration);
+      if (!Number.isInteger(progressTabId)) {
+        throw new Error('No active tab for embed overlay.');
+      }
+      await tbrgShowEmbedOnTab(progressTabId, template);
+      tbrgAssertRunActive(runGeneration);
+
+      const finishedEmbedPayload = {
+        stage: 'finished',
+        templateId: template.id,
+        completedTasks: totalTasks,
+        totalTasks,
+        completedSteps: (executionResult.stepResults || []).filter((step) => step.ok).length,
+        totalSteps,
+        downloadFilename: ''
+      };
+      await tbrgNotifyJobProgress(finishedEmbedPayload);
+      await tbrgRenderPageProgress(progressTabId, finishedEmbedPayload);
+
+      return {
+        templateId: template.id,
+        executionResult,
+        download: null,
+        screenshotDownloads,
+        embedOpened: true
+      };
+    }
+
+    let externalSlidesHtml = '';
+    const slidesCandidatePaths = [];
+    if (typeof template.slidesHtmlFileResolved === 'string' && template.slidesHtmlFileResolved.trim()) {
+      slidesCandidatePaths.push(template.slidesHtmlFileResolved.trim());
+    }
+    if (typeof template.id === 'string' && template.id.trim()) {
+      slidesCandidatePaths.push(`templates/${template.id.trim()}/template.html`);
+    }
+    for (const candidate of slidesCandidatePaths) {
+      tbrgAssertRunActive(runGeneration);
+      try {
+        externalSlidesHtml = await tbrgFetchText(candidate);
+        if (externalSlidesHtml) {
+          break;
+        }
+      } catch (_error) {
+        // Try next candidate.
+      }
+    }
+
+    tbrgAssertRunActive(runGeneration);
+    const htmlRaw = tbrgBuildRevealDeckHtml(template, executionResult.results, externalSlidesHtml);
+    const html = await tbrgInlineDeckRelativeAssets(htmlRaw, template.id);
+    const download = await tbrgDownloadDeck(html, template.id);
     tbrgAssertRunActive(runGeneration);
 
-    const finishedEmbedPayload = {
+    const finishedPayload = {
       stage: 'finished',
       templateId: template.id,
       completedTasks: totalTasks,
       totalTasks,
       completedSteps: (executionResult.stepResults || []).filter((step) => step.ok).length,
       totalSteps,
-      downloadFilename: ''
+      downloadFilename: download.filename
     };
-    await tbrgNotifyJobProgress(finishedEmbedPayload);
-    await tbrgRenderPageProgress(progressTabId, finishedEmbedPayload);
+    await tbrgNotifyJobProgress(finishedPayload);
+    await tbrgRenderPageProgress(progressTabId, finishedPayload);
 
     return {
       templateId: template.id,
       executionResult,
-      download: null,
+      download,
       screenshotDownloads,
-      embedOpened: true
+      embedOpened: false
     };
+  } finally {
+    tbrgAutomationJobInProgress = false;
   }
-
-  let externalSlidesHtml = '';
-  const slidesCandidatePaths = [];
-  if (typeof template.slidesHtmlFileResolved === 'string' && template.slidesHtmlFileResolved.trim()) {
-    slidesCandidatePaths.push(template.slidesHtmlFileResolved.trim());
-  }
-  if (typeof template.id === 'string' && template.id.trim()) {
-    slidesCandidatePaths.push(`templates/${template.id.trim()}/template.html`);
-  }
-  for (const candidate of slidesCandidatePaths) {
-    tbrgAssertRunActive(runGeneration);
-    try {
-      externalSlidesHtml = await tbrgFetchText(candidate);
-      if (externalSlidesHtml) {
-        break;
-      }
-    } catch (_error) {
-      // Try next candidate.
-    }
-  }
-
-  tbrgAssertRunActive(runGeneration);
-  const html = tbrgBuildRevealDeckHtml(template, executionResult.results, externalSlidesHtml);
-  const download = await tbrgDownloadDeck(html, template.id);
-  tbrgAssertRunActive(runGeneration);
-
-  const finishedPayload = {
-    stage: 'finished',
-    templateId: template.id,
-    completedTasks: totalTasks,
-    totalTasks,
-    completedSteps: (executionResult.stepResults || []).filter((step) => step.ok).length,
-    totalSteps,
-    downloadFilename: download.filename
-  };
-  await tbrgNotifyJobProgress(finishedPayload);
-  await tbrgRenderPageProgress(progressTabId, finishedPayload);
-
-  return {
-    templateId: template.id,
-    executionResult,
-    download,
-    screenshotDownloads,
-    embedOpened: false
-  };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'TBRG_JOB_STEP_PROGRESS') {
+    const tabId = Number(message.progressTabId);
+    const payload = {
+      stage: 'running',
+      templateId: message.templateId,
+      completedTasks: Number(message.completedTasks) || 0,
+      totalTasks: Number(message.totalTasks) || 0,
+      completedSteps: Number(message.completedSteps) || 0,
+      totalSteps: Number(message.totalSteps) || 0,
+      lastCompletedStepId: message.lastCompletedStepId || null,
+      currentTaskId: message.currentTaskId || null,
+      currentTaskName: message.currentTaskName || null
+    };
+    tbrgNotifyJobProgress(payload).catch(() => null);
+    if (Number.isInteger(tabId)) {
+      tbrgRenderPageProgress(tabId, payload).catch(() => null);
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
   if (message?.type === 'TBRG_LIST_TEMPLATES') {
     tbrgListTemplates()
       .then((result) => sendResponse({ ok: true, ...result }))
@@ -1156,16 +1488,64 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === 'TBRG_DEBUG_ACTIVITY') {
+    const ev = message.event;
+    if (!ev || typeof ev !== 'object' || typeof ev.type !== 'string') {
+      sendResponse({ ok: false, error: 'Invalid debug event.' });
+      return false;
+    }
+    if (tbrgAutomationJobInProgress) {
+      sendResponse({ ok: true, skippedDuringJob: true });
+      return true;
+    }
+    tbrgDebugAppendEvent(ev)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === 'TBRG_DEBUG_EXPORT_LOG') {
+    chrome.storage.local.get([TBRG_DEBUG_DOM_LOG_KEY], (stored) => {
+      let doc = stored[TBRG_DEBUG_DOM_LOG_KEY];
+      if (!doc || !Array.isArray(doc.events)) {
+        doc = {
+          schemaVersion: TBRG_DEBUG_SCHEMA_VERSION,
+          sessionStartedAt: new Date().toISOString(),
+          events: []
+        };
+      }
+      tbrgExportDebugActivityLog(doc)
+        .then((out) => sendResponse({ ok: true, filename: out.filename }))
+        .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    });
+    return true;
+  }
+
+  if (message?.type === 'TBRG_DEBUG_CLEAR_LOG') {
+    tbrgDebugClearLogKeepSession()
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+
   if (message?.type === 'TBRG_PICK_ELEMENT') {
     tbrgPickDomElementFromActiveTab()
       .then(async ({ pick, pageUrl }) => {
-        const debugPayload = {
-          capturedAt: new Date().toISOString(),
+        await tbrgDebugAppendEvent({
+          type: 'domPick',
           pageUrl,
           pick
-        };
-        const debugDownload = await tbrgDownloadJsonDebugFile(debugPayload);
-        sendResponse({ ok: true, pick, debugJsonFilename: debugDownload.filename });
+        });
+        const flag = await new Promise((resolve) => {
+          chrome.storage.local.get([TBRG_DEBUG_MODE_STORAGE_KEY], (data) => {
+            resolve(Boolean(data[TBRG_DEBUG_MODE_STORAGE_KEY]));
+          });
+        });
+        sendResponse({
+          ok: true,
+          pick,
+          ...(flag ? { debugExportPathHint: TBRG_DEBUG_EXPORT_RELATIVE_PATH } : {})
+        });
       })
       .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
     return true;

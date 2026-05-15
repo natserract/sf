@@ -1,0 +1,103 @@
+{
+    "id": "monthly-report-generator",
+    "name": "Monthly Report Generator",
+    "themeId": "eraspace-kpi",
+    "deckStyle": {
+        "deckBg": "#f6f8ff",
+        "cardBg": "#e6eeff",
+        "cardRadius": "18px",
+        "textPrimary": "#1e2447",
+        "accentPrimary": "#1654b8",
+        "fontFamily": "Inter, system-ui, Arial, sans-serif"
+    },
+    "slideLayouts": {
+        "hero": "kpi-hero",
+        "summary": "summary-layout"
+    },
+    "deckCss": ".kpi-hero { border: 1px solid rgba(22,84,184,0.1); } .kpi-card.primary .kpi-value { letter-spacing: 0.02em; }",
+    "tasks": [
+        {
+            "id": "task1_stoChartCapture",
+            "name": "Task 1 - STO chart capture",
+            "page": "https://mc.s12.exacttarget.com/cloud/#app/Einstein%20Send%20Time%20Optimization/setup/?stackKey=S12",
+            "frameUrlIncludes": "sto.us.sfmc-einstein.com/setup/",
+            "frameResolveTimeoutMs": 60000,
+            "steps": [
+                {
+                    "type": "waitFor",
+                    "operator": "exists",
+                    "selector": ".card-open-likelihood--wave-chart-container .ps-container",
+                    "requireVisible": true,
+                    "timeoutMs": 60000
+                },
+                {
+                    "id": "stoChartScreenshot",
+                    "type": "image",
+                    "operator": "capture",
+                    "value": "stoChartScreenshot",
+                    "selector": ".card-open-likelihood--wave-chart-container",
+                    "readySelector": ".card-open-likelihood--wave-chart-container .ps-container",
+                    "readyRequireVisible": true,
+                    "boundsSelector": "canvas.chart",
+                    "timeoutMs": 60000,
+                    "matchIndex": 0,
+                    "preCaptureDelayMs": 1200,
+                    "dismissSelectors": [
+                        "button.slds-modal__close"
+                    ],
+                    "dismissAttempts": 3,
+                    "postDismissDelayMs": 300,
+                    "captureScrollBlock": "start",
+                    "captureEnsureVisible": true,
+                    "downloadBasename": "sto-chart"
+                }
+            ]
+        },
+        {
+            "id": "task2_intelligenceReports",
+            "name": "Task 2 - Intelligence Reports capture",
+            "page": "https://mc.s12.exacttarget.com/cloud/#app/Intelligence%20Reports/137411/visualize/2692467/page/v2/4073717?is_embed=true",
+            "frameUrlIncludes": "mc-us.datorama.com/137411/visualize/2692467/page/v2/4073717",
+            "frameResolveTimeoutMs": 60000,
+            "steps": [
+                {
+                    "id": "intelMetric0Text",
+                    "type": "dom",
+                    "operator": "readText",
+                    "value": "intelMetric0Text",
+                    "selector": "div.status-bar-header > div.no-dimension > div.status-primary > div.primary-value > span.ng-star-inserted",
+                    "requireVisible": true,
+                    "timeoutMs": 60000,
+                    "matchIndex": 0
+                }
+            ]
+        },
+        {
+            "id": "task3_csvInput",
+            "name": "Task 3 - CSV input",
+            "steps": [
+                {
+                    "id": "salesCsv",
+                    "type": "csv",
+                    "operator": "input",
+                    "value": "salesCsv",
+                    "label": "Step 3: Upload campaign CSV",
+                    "helpText": "Step 3: CSV will be parsed and used for aggregations like Order Rate sum.",
+                    "delimiter": ",",
+                    "hasHeader": true,
+                    "maxRows": 5000,
+                    "timeoutMs": 600000
+                },
+                {
+                    "id": "clickthroughRateSum",
+                    "type": "csv",
+                    "operator": "aggregate",
+                    "value": "clickthroughRateSum",
+                    "sourceValue": "salesCsv",
+                    "aggregateType": "sum",
+                    "column": "Clickthrough Rate"
+                }
+            ]
+        }
+    ]
+}
