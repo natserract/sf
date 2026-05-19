@@ -2,7 +2,7 @@ const TBRG_CUSTOM_TEMPLATE_STORAGE_KEY = 'tbrg.customTemplateText';
 const TBRG_SELECTED_TEMPLATE_STORAGE_KEY = 'tbrg.selectedTemplateId';
 const TBRG_TEMPLATE_INDEX_FILE = 'templates/index.json';
 
-const TBRG_ALLOWED_STEP_TYPES = new Set(['text', 'csv', 'waitFor', 'image', 'dom', 'network']);
+const TBRG_ALLOWED_STEP_TYPES = new Set(['text', 'csv', 'waitFor', 'image', 'dom', 'network', 'repeat']);
 
 async function tbrgFetchText(relativePath) {
   const response = await fetch(chrome.runtime.getURL(relativePath), { cache: 'no-store' });
@@ -61,8 +61,62 @@ function tbrgValidateStep(step, templateId, source, path) {
   }
   const stepValue = typeof step.value === 'string' ? step.value.trim() : '';
 
-  if (type !== 'waitFor' && (typeof step.id !== 'string' || !step.id.trim())) {
+  if (type !== 'waitFor' && type !== 'repeat' && (typeof step.id !== 'string' || !step.id.trim())) {
     throw new Error(`Template "${templateId}" step type "${type}" at ${path} requires an "id" string in ${source}.`);
+  }
+
+  if (type === 'repeat') {
+    if (operator !== 'each') {
+      throw new Error(`Template "${templateId}" repeat step "${step.id || path}" supports only operator "each" in ${source}.`);
+    }
+    if (typeof step.id !== 'string' || !step.id.trim()) {
+      throw new Error(`Template "${templateId}" repeat.each step at ${path} requires an "id" string in ${source}.`);
+    }
+    if (!Array.isArray(step.items) || step.items.length === 0) {
+      throw new Error(`Template "${templateId}" repeat.each step "${step.id}" requires non-empty "items" array in ${source}.`);
+    }
+    if (step.items.length > 50) {
+      throw new Error(`Template "${templateId}" repeat.each step "${step.id}" has too many "items" (max 50) in ${source}.`);
+    }
+    if (!Array.isArray(step.steps) || step.steps.length === 0) {
+      throw new Error(`Template "${templateId}" repeat.each step "${step.id}" requires non-empty "steps" array in ${source}.`);
+    }
+    if (step.steps.length > 48) {
+      throw new Error(`Template "${templateId}" repeat.each step "${step.id}" has too many nested "steps" (max 48) in ${source}.`);
+    }
+    const variable = typeof step.variable === 'string' && step.variable.trim() ? step.variable.trim() : 'ITEM';
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(variable)) {
+      throw new Error(
+        `Template "${templateId}" repeat.each step "${step.id}" has invalid "variable" (use letters, digits, underscore) in ${source}.`
+      );
+    }
+    const sumInto = typeof step.sumInto === 'string' ? step.sumInto.trim() : '';
+    const sumFromKey = typeof step.sumFromKey === 'string' ? step.sumFromKey.trim() : '';
+    if (sumInto && !sumFromKey) {
+      throw new Error(
+        `Template "${templateId}" repeat.each step "${step.id}" defines "sumInto" but is missing "sumFromKey" in ${source}.`
+      );
+    }
+    if (sumFromKey && !sumInto) {
+      throw new Error(
+        `Template "${templateId}" repeat.each step "${step.id}" defines "sumFromKey" but is missing "sumInto" in ${source}.`
+      );
+    }
+    step.items.forEach((item, itemIndex) => {
+      if (typeof item !== 'string' || !item.trim()) {
+        throw new Error(
+          `Template "${templateId}" repeat.each step "${step.id}" has invalid items[${itemIndex}] in ${source}.`
+        );
+      }
+    });
+    step.steps.forEach((sub, subIndex) => {
+      if (sub && sub.type === 'repeat') {
+        throw new Error(
+          `Template "${templateId}" repeat.each step "${step.id}" must not nest repeat at steps[${subIndex}] in ${source}.`
+        );
+      }
+      tbrgValidateStep(sub, templateId, source, `${path}.steps[${subIndex}]`);
+    });
   }
 
   if (Object.prototype.hasOwnProperty.call(step, 'label') && typeof step.label !== 'string') {
@@ -84,6 +138,34 @@ function tbrgValidateStep(step, templateId, source, path) {
     }
     if (Object.prototype.hasOwnProperty.call(step, 'value')) {
       throw new Error(`Template "${templateId}" waitFor.exists step "${step.id || path}" must not define "value" in ${source}.`);
+    }
+    if (Object.prototype.hasOwnProperty.call(step, 'keepHoverSelector') && typeof step.keepHoverSelector !== 'string') {
+      throw new Error(
+        `Template "${templateId}" waitFor.exists step "${step.id || path}" has non-string "keepHoverSelector" in ${source}.`
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(step, 'keepHoverParent') && typeof step.keepHoverParent !== 'boolean') {
+      throw new Error(
+        `Template "${templateId}" waitFor.exists step "${step.id || path}" has non-boolean "keepHoverParent" in ${source}.`
+      );
+    }
+    const waitClickText = typeof step.clickText === 'string' ? step.clickText.trim() : '';
+    if (Object.prototype.hasOwnProperty.call(step, 'clickText') && !waitClickText) {
+      throw new Error(
+        `Template "${templateId}" waitFor.exists step "${step.id || path}" requires non-empty "clickText" when provided in ${source}.`
+      );
+    }
+    if (waitClickText) {
+      if (!(typeof step.clickTextSelector === 'string' && step.clickTextSelector.trim())) {
+        throw new Error(
+          `Template "${templateId}" waitFor.exists step "${step.id || path}" with "clickText" requires non-empty "clickTextSelector" in ${source}.`
+        );
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(step, 'clickTextSelector') && !waitClickText) {
+      throw new Error(
+        `Template "${templateId}" waitFor.exists step "${step.id || path}" defines "clickTextSelector" without "clickText" in ${source}.`
+      );
     }
   }
 
@@ -183,6 +265,24 @@ function tbrgValidateStep(step, templateId, source, path) {
           `Template "${templateId}" dom.click step "${step.id}" has invalid "preClickDelayMs" in ${source}.`
         );
       }
+      if (Object.prototype.hasOwnProperty.call(step, 'clickText') && typeof step.clickText !== 'string') {
+        throw new Error(`Template "${templateId}" dom.click step "${step.id}" has non-string "clickText" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'clickTextSelector') && typeof step.clickTextSelector !== 'string') {
+        throw new Error(
+          `Template "${templateId}" dom.click step "${step.id}" has non-string "clickTextSelector" in ${source}.`
+        );
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'keepHoverSelector') && typeof step.keepHoverSelector !== 'string') {
+        throw new Error(
+          `Template "${templateId}" dom.click step "${step.id}" has non-string "keepHoverSelector" in ${source}.`
+        );
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'keepHoverParent') && typeof step.keepHoverParent !== 'boolean') {
+        throw new Error(
+          `Template "${templateId}" dom.click step "${step.id}" has non-boolean "keepHoverParent" in ${source}.`
+        );
+      }
     }
 
     if (operator === 'readText') {
@@ -194,6 +294,53 @@ function tbrgValidateStep(step, templateId, source, path) {
         if (tm !== 'innerText' && tm !== 'textContent') {
           throw new Error(`Template "${templateId}" dom.readText step "${step.id}" has invalid "textMode" (use "innerText" or "textContent") in ${source}.`);
         }
+      }
+    } else if (operator === 'hover') {
+      if (stepValue) {
+        throw new Error(`Template "${templateId}" dom.hover step "${step.id}" must not define "value" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'textMode')) {
+        throw new Error(`Template "${templateId}" dom.hover step "${step.id}" must not define "textMode" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'hoverDispatch')) {
+        const hd = typeof step.hoverDispatch === 'string' ? step.hoverDispatch.trim().toLowerCase() : '';
+        if (hd !== 'native' && hd !== 'synthetic' && hd !== 'both') {
+          throw new Error(
+            `Template "${templateId}" dom.hover step "${step.id}" has invalid "hoverDispatch" (use "native", "synthetic", or "both") in ${source}.`
+          );
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'hoverParent') && typeof step.hoverParent !== 'boolean') {
+        throw new Error(`Template "${templateId}" dom.hover step "${step.id}" has non-boolean "hoverParent" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'hoverUntilSelector') && typeof step.hoverUntilSelector !== 'string') {
+        throw new Error(
+          `Template "${templateId}" dom.hover step "${step.id}" has non-string "hoverUntilSelector" in ${source}.`
+        );
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(step, 'hoverUntilTimeoutMs') &&
+        !(Number.isFinite(Number(step.hoverUntilTimeoutMs)) && Number(step.hoverUntilTimeoutMs) > 0)
+      ) {
+        throw new Error(
+          `Template "${templateId}" dom.hover step "${step.id}" has invalid "hoverUntilTimeoutMs" in ${source}.`
+        );
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(step, 'hoverRetries') &&
+        !(Number.isFinite(Number(step.hoverRetries)) && Number(step.hoverRetries) >= 1)
+      ) {
+        throw new Error(`Template "${templateId}" dom.hover step "${step.id}" has invalid "hoverRetries" in ${source}.`);
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'hoverUntilChildSelector') && typeof step.hoverUntilChildSelector !== 'string') {
+        throw new Error(
+          `Template "${templateId}" dom.hover step "${step.id}" has non-string "hoverUntilChildSelector" in ${source}.`
+        );
+      }
+      if (Object.prototype.hasOwnProperty.call(step, 'hoverFallbackClick') && typeof step.hoverFallbackClick !== 'boolean') {
+        throw new Error(
+          `Template "${templateId}" dom.hover step "${step.id}" has non-boolean "hoverFallbackClick" in ${source}.`
+        );
       }
     } else {
       if (stepValue) {
@@ -287,6 +434,10 @@ function tbrgValidateStep(step, templateId, source, path) {
     if (!(Number.isFinite(timeoutMs) && timeoutMs > 0)) {
       throw new Error(`Template "${templateId}" step at ${path} has invalid "timeoutMs" in ${source}.`);
     }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(step, 'frameUrlIncludes') && typeof step.frameUrlIncludes !== 'string') {
+    throw new Error(`Template "${templateId}" step at ${path} has non-string "frameUrlIncludes" in ${source}.`);
   }
 }
 

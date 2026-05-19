@@ -676,11 +676,187 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
     fire(MouseEvent, 'click', {});
   }
 
+  /**
+   * Pointer/mouse hover at element center (no click). SPAs often ignore bare mouseenter without coordinates.
+   */
+  function tbrgDispatchSyntheticPointerHover(element) {
+    if (!(element instanceof Element)) {
+      return;
+    }
+    const rect = element.getBoundingClientRect();
+    const cx = Math.min(Math.max(rect.left + rect.width / 2, rect.left + 1), rect.right - 1);
+    const cy = Math.min(Math.max(rect.top + rect.height / 2, rect.top + 1), rect.bottom - 1);
+    const common = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window,
+      clientX: cx,
+      clientY: cy
+    };
+
+    const fire = (Ctor, type, extra = {}) => {
+      try {
+        element.dispatchEvent(new Ctor(type, { ...common, ...extra }));
+      } catch (_e) {
+        // ignore
+      }
+    };
+
+    if (typeof PointerEvent === 'function') {
+      fire(PointerEvent, 'pointerover', { pointerId: 1, pointerType: 'mouse', isPrimary: true });
+      fire(PointerEvent, 'pointerenter', { pointerId: 1, pointerType: 'mouse', isPrimary: true });
+    }
+    fire(MouseEvent, 'mouseenter', {});
+    fire(MouseEvent, 'mouseover', {});
+    fire(MouseEvent, 'mousemove', {});
+  }
+
+  function tbrgApplyKeepHover(keepHoverSelector, options = {}) {
+    const sel = typeof keepHoverSelector === 'string' ? keepHoverSelector.trim() : '';
+    if (!sel) {
+      return;
+    }
+    const el = document.querySelector(sel);
+    if (!(el instanceof Element)) {
+      return;
+    }
+    const dispatch = typeof options.dispatch === 'string' ? options.dispatch : 'synthetic';
+    const alsoParent = options.hoverParent !== false;
+    const targets = [];
+    if (alsoParent) {
+      const parentLi = el.closest('li');
+      if (parentLi instanceof Element) {
+        targets.push(parentLi);
+      }
+    }
+    targets.push(el);
+    for (const target of targets) {
+      tbrgDispatchHoverOnElement(target, dispatch);
+    }
+  }
+
+  function tbrgDispatchHoverOnElement(element, hoverDispatch) {
+    const mode = typeof hoverDispatch === 'string' ? hoverDispatch.trim().toLowerCase() : 'synthetic';
+    if (mode === 'native') {
+      try {
+        element.dispatchEvent(
+          new MouseEvent('mouseenter', { bubbles: true, cancelable: true, view: window })
+        );
+        element.dispatchEvent(
+          new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window })
+        );
+      } catch (_error) {
+        throw new Error('dom.hover could not dispatch pointer events on the target element.');
+      }
+      return;
+    }
+    tbrgDispatchSyntheticPointerHover(element);
+    if (mode === 'both') {
+      try {
+        element.dispatchEvent(
+          new MouseEvent('mouseenter', { bubbles: true, cancelable: true, view: window })
+        );
+        element.dispatchEvent(
+          new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window })
+        );
+      } catch (_e) {
+        // ignore
+      }
+    }
+  }
+
+  function tbrgNormalizeTextForMatch(value) {
+    return String(value == null ? '' : value).trim().toLowerCase();
+  }
+
+  function tbrgFindElementByText(scopeEl, itemSelector, textNeedle, matchIndex = 0) {
+    if (!(scopeEl instanceof Element)) {
+      throw new Error('clickText scope is not an element.');
+    }
+    const needle = tbrgNormalizeTextForMatch(textNeedle);
+    if (!needle) {
+      throw new Error('clickText is empty.');
+    }
+    const itemSel = typeof itemSelector === 'string' && itemSelector.trim() ? itemSelector.trim() : 'li';
+    const candidates = Array.from(scopeEl.querySelectorAll(itemSel));
+    const matches = candidates.filter((el) => {
+      if (!(el instanceof Element)) {
+        return false;
+      }
+      const fields = [el.innerText, el.textContent, el.getAttribute('title'), el.getAttribute('aria-label')];
+      return fields.some((field) => tbrgNormalizeTextForMatch(field) === needle);
+    });
+    const idx = tbrgNormalizeMatchIndex(matchIndex);
+    if (matches.length <= idx) {
+      throw new Error(
+        `clickText "${textNeedle}" not found in scope (selector "${itemSel}", ${matches.length} match${matches.length === 1 ? '' : 'es'}).`
+      );
+    }
+    return matches[idx];
+  }
+
+  async function tbrgWaitForClickText(scopeSelector, itemSelector, textNeedle, timeoutMs, matchIndex = 0, requireVisible = false) {
+    const startedAt = Date.now();
+    const idx = tbrgNormalizeMatchIndex(matchIndex);
+    while (Date.now() - startedAt < timeoutMs) {
+      const scope = document.querySelector(scopeSelector);
+      if (scope instanceof Element) {
+        try {
+          const candidate = tbrgFindElementByText(scope, itemSelector, textNeedle, idx);
+          if (!requireVisible || tbrgIsElementVisible(candidate)) {
+            tbrgAutomationShowDomAccess(candidate, { selector: scopeSelector, matchIndex: idx, clickText: textNeedle });
+            return candidate;
+          }
+        } catch (_error) {
+          // Keep polling until timeout.
+        }
+      }
+      await tbrgSleep(250);
+    }
+    const visHint = requireVisible ? ' (visible)' : '';
+    throw new Error(
+      `Timed out waiting for clickText "${textNeedle}" in "${scopeSelector}"${visHint} (matchIndex ${idx}).`
+    );
+  }
+
+  function tbrgQueryHoverUntilReady(hoverUntilSelector, hoverUntilChildSelector, requireVisible) {
+    const panelSel = typeof hoverUntilSelector === 'string' ? hoverUntilSelector.trim() : '';
+    if (!panelSel) {
+      return null;
+    }
+    const panels = document.querySelectorAll(panelSel);
+    for (const panel of panels) {
+      if (!(panel instanceof Element)) {
+        continue;
+      }
+      const childSel =
+        typeof hoverUntilChildSelector === 'string' ? hoverUntilChildSelector.trim() : '';
+      if (childSel) {
+        const child = panel.querySelector(childSel);
+        if (child instanceof Element && (!requireVisible || tbrgIsElementVisible(child))) {
+          return panel;
+        }
+        continue;
+      }
+      if (!requireVisible || tbrgIsElementVisible(panel)) {
+        return panel;
+      }
+    }
+    return null;
+  }
+
   async function tbrgWaitForSelector(selector, timeoutMs, matchIndex = 0, waitOptions = {}) {
     const requireVisible = waitOptions.requireVisible === true;
+    const keepHoverSelector =
+      typeof waitOptions.keepHoverSelector === 'string' ? waitOptions.keepHoverSelector.trim() : '';
+    const keepHoverParent = waitOptions.keepHoverParent === true;
     const idx = tbrgNormalizeMatchIndex(matchIndex);
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
+      if (keepHoverSelector) {
+        tbrgApplyKeepHover(keepHoverSelector, { hoverParent: keepHoverParent });
+      }
       const elements = document.querySelectorAll(selector);
       if (elements.length > idx) {
         const candidate = elements[idx];
@@ -1115,6 +1291,37 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
     return dataUrl;
   }
 
+  function tbrgInterpolateRepeatVars(value, varName, itemValue) {
+    const token = `{{${varName}}}`;
+    function walk(v) {
+      if (typeof v === 'string') {
+        return v.split(token).join(itemValue);
+      }
+      if (Array.isArray(v)) {
+        return v.map(walk);
+      }
+      if (v && typeof v === 'object') {
+        const out = {};
+        for (const [k, val] of Object.entries(v)) {
+          out[k] = walk(val);
+        }
+        return out;
+      }
+      return v;
+    }
+    return walk(value);
+  }
+
+  function tbrgParseFirstNumericFromMemberLabel(text) {
+    const s = String(text == null ? '' : text).trim();
+    const m = s.match(/[\d,]+/);
+    if (!m) {
+      return null;
+    }
+    const n = parseInt(m[0].replace(/,/g, ''), 10);
+    return Number.isFinite(n) ? n : null;
+  }
+
   function tbrgToNumberForAggregation(value) {
     if (typeof value === 'number') {
       return Number.isFinite(value) ? value : null;
@@ -1128,7 +1335,7 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
-  async function tbrgRunStep(step, resultsContext) {
+  async function tbrgRunStep(step, resultsContext, execCtx) {
     const timeoutMs = Number(step.timeoutMs) > 0 ? Number(step.timeoutMs) : 10000;
     const matchIndex = step.matchIndex;
     const type = String(step.type || '').trim();
@@ -1139,6 +1346,80 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
       type,
       operator
     });
+
+    if (type === 'repeat' && operator === 'each') {
+      const items = Array.isArray(step.items)
+        ? step.items.filter((x) => typeof x === 'string' && x.trim())
+        : [];
+      const varName =
+        typeof step.variable === 'string' && step.variable.trim() ? step.variable.trim() : 'ITEM';
+      const innerSteps = Array.isArray(step.steps) ? step.steps : [];
+      const sumInto = typeof step.sumInto === 'string' ? step.sumInto.trim() : '';
+      const sumFromKey = typeof step.sumFromKey === 'string' ? step.sumFromKey.trim() : '';
+      let aggregate = 0;
+      let aggregateCount = 0;
+      for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+        const item = items[itemIndex];
+        for (let subIndex = 0; subIndex < innerSteps.length; subIndex += 1) {
+          const sub = innerSteps[subIndex];
+          const resolved = tbrgInterpolateRepeatVars(sub, varName, item);
+          if (step.__taskId) {
+            resolved.__taskId = step.__taskId;
+          }
+          const subStartedAt = tbrgNow();
+          try {
+            const subResult = await tbrgRunStep(resolved, resultsContext, execCtx);
+            const innerValueKey = typeof resolved.value === 'string' ? resolved.value.trim() : '';
+            if (innerValueKey && subResult && subResult.ok) {
+              resultsContext[innerValueKey] = subResult.value;
+            }
+            if (execCtx && execCtx.stepResults && execCtx.progressReporting) {
+              execCtx.stepResults.push({
+                id: resolved.id || `${step.id}_i${itemIndex}_s${subIndex}`,
+                value: typeof resolved.value === 'string' ? resolved.value.trim() || null : null,
+                taskId: resolved.__taskId || null,
+                durationMs: tbrgNow() - subStartedAt,
+                ...subResult
+              });
+              tbrgMaybeReportStepProgress(execCtx.progressReporting, execCtx.stepResults);
+            }
+          } catch (error) {
+            if (execCtx && execCtx.stepResults && execCtx.progressReporting) {
+              execCtx.stepResults.push({
+                id: resolved.id || `${step.id}_i${itemIndex}_s${subIndex}`,
+                value: typeof resolved.value === 'string' ? resolved.value.trim() || null : null,
+                taskId: resolved.__taskId || null,
+                durationMs: tbrgNow() - subStartedAt,
+                ok: false,
+                error: error.message || String(error)
+              });
+              tbrgMaybeReportStepProgress(execCtx.progressReporting, execCtx.stepResults);
+            }
+            throw error;
+          }
+        }
+        if (sumInto && sumFromKey) {
+          const raw = resultsContext[sumFromKey];
+          const n = tbrgParseFirstNumericFromMemberLabel(raw);
+          if (n != null) {
+            aggregate += n;
+            aggregateCount += 1;
+          }
+        }
+      }
+      if (sumInto && sumFromKey && aggregateCount > 0) {
+        resultsContext[sumInto] = String(aggregate);
+      } else if (sumInto && sumFromKey) {
+        resultsContext[sumInto] = '';
+      }
+      return {
+        ok: true,
+        value: sumInto ? aggregate : items.length,
+        repeatItems: items.length,
+        repeatSum: sumInto ? aggregate : null,
+        repeatWrapped: true
+      };
+    }
 
     if (type === 'text' && operator === 'input') {
       const stepId = String(step.id || '').trim();
@@ -1291,39 +1572,160 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
 
     if (type === 'waitFor' && operator === 'exists') {
       const requireVisible = step.requireVisible === true;
-      await tbrgWaitForSelector(step.selector, timeoutMs, matchIndex, { requireVisible });
+      const keepHoverSelector =
+        typeof step.keepHoverSelector === 'string' ? step.keepHoverSelector.trim() : '';
+      const waitClickText = typeof step.clickText === 'string' ? step.clickText.trim() : '';
+      const waitClickTextSelector =
+        typeof step.clickTextSelector === 'string' ? step.clickTextSelector.trim() : '';
+      if (waitClickText) {
+        if (!waitClickTextSelector) {
+          throw new Error('waitFor.exists with clickText requires clickTextSelector.');
+        }
+        await tbrgWaitForClickText(
+          step.selector,
+          waitClickTextSelector,
+          waitClickText,
+          timeoutMs,
+          matchIndex,
+          requireVisible
+        );
+        return { ok: true, value: true };
+      }
+      await tbrgWaitForSelector(step.selector, timeoutMs, matchIndex, {
+        requireVisible,
+        keepHoverSelector,
+        keepHoverParent: step.keepHoverParent === true
+      });
       return { ok: true, value: true };
     }
 
     if (type === 'dom' && operator === 'hover') {
       const requireVisible = step.requireVisible === true;
       const idx = Number.isFinite(Number(matchIndex)) ? Number(matchIndex) : 0;
-      await tbrgWaitForSelector(step.selector, timeoutMs, idx, { requireVisible });
-      const el = tbrgGetElement(step.selector, idx);
-      try {
-        el.dispatchEvent(
-          new MouseEvent('mouseenter', { bubbles: true, cancelable: true, view: window })
-        );
-        el.dispatchEvent(
-          new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window })
-        );
-      } catch (_error) {
-        throw new Error('dom.hover could not dispatch pointer events on the target element.');
+      const hoverUntilSelector =
+        typeof step.hoverUntilSelector === 'string' ? step.hoverUntilSelector.trim() : '';
+      const hoverUntilChildSelector =
+        typeof step.hoverUntilChildSelector === 'string' ? step.hoverUntilChildSelector.trim() : '';
+      const hoverUntilTimeoutMs =
+        Number(step.hoverUntilTimeoutMs) > 0 ? Number(step.hoverUntilTimeoutMs) : 3000;
+      const hoverRetries = Number(step.hoverRetries) > 0
+        ? Math.min(12, Math.floor(Number(step.hoverRetries)))
+        : (hoverUntilSelector ? 6 : 1);
+      const hoverSettleMs = Number(step.hoverSettleMs) > 0 ? Number(step.hoverSettleMs) : 400;
+      const hoverDispatch =
+        typeof step.hoverDispatch === 'string' ? step.hoverDispatch.trim().toLowerCase() : 'synthetic';
+      const hoverParent = step.hoverParent === true;
+      const hoverFallbackClick = step.hoverFallbackClick === true;
+      const startedAt = Date.now();
+
+      for (let attempt = 0; attempt < hoverRetries; attempt += 1) {
+        const remainingMs = timeoutMs - (Date.now() - startedAt);
+        if (remainingMs <= 0) {
+          break;
+        }
+
+        await tbrgWaitForSelector(step.selector, remainingMs, idx, { requireVisible });
+        const el = tbrgGetElement(step.selector, idx);
+        const parentLi = hoverParent && el instanceof Element ? el.closest('li') : null;
+        try {
+          el.scrollIntoView({ block: 'center', inline: 'nearest' });
+        } catch (_error) {
+          // Best effort.
+        }
+
+        const targets = [el];
+        if (parentLi instanceof Element && parentLi !== el) {
+          targets.unshift(parentLi);
+        }
+        for (const target of targets) {
+          tbrgDispatchHoverOnElement(target, hoverDispatch);
+        }
+
+        await tbrgSleep(hoverSettleMs);
+
+        if (!hoverUntilSelector) {
+          return { ok: true, value: true, hoverAttempts: attempt + 1 };
+        }
+
+        const panelDeadline = Date.now() + hoverUntilTimeoutMs;
+        while (Date.now() < panelDeadline) {
+          for (const target of targets) {
+            tbrgDispatchHoverOnElement(target, hoverDispatch);
+          }
+          const panel = tbrgQueryHoverUntilReady(
+            hoverUntilSelector,
+            hoverUntilChildSelector,
+            requireVisible
+          );
+          if (panel) {
+            return { ok: true, value: true, hoverAttempts: attempt + 1 };
+          }
+          await tbrgSleep(120);
+        }
+
+        if (hoverFallbackClick) {
+          for (const target of targets) {
+            if (typeof target.click === 'function') {
+              target.click();
+            }
+            tbrgDispatchSyntheticPointerClick(target);
+          }
+          await tbrgSleep(400);
+          const panelAfterClick = tbrgQueryHoverUntilReady(
+            hoverUntilSelector,
+            hoverUntilChildSelector,
+            requireVisible
+          );
+          if (panelAfterClick) {
+            return { ok: true, value: true, hoverAttempts: attempt + 1, hoverFallbackClick: true };
+          }
+        }
       }
-      const hoverSettleMs = Number(step.hoverSettleMs) > 0 ? Number(step.hoverSettleMs) : 250;
-      await new Promise((resolve) => setTimeout(resolve, hoverSettleMs));
-      return { ok: true, value: true };
+
+      if (hoverUntilSelector) {
+        const childHint = hoverUntilChildSelector ? ` with child "${hoverUntilChildSelector}"` : '';
+        throw new Error(
+          `dom.hover: panel did not open (${hoverUntilSelector}${childHint}) after ${hoverRetries} hover attempt(s).`
+        );
+      }
+      throw new Error(`dom.hover timed out after ${hoverRetries} attempt(s).`);
     }
 
     if (type === 'dom' && operator === 'click') {
       const requireVisible = step.requireVisible === true;
       const idx = Number.isFinite(Number(matchIndex)) ? Number(matchIndex) : 0;
-      await tbrgWaitForSelector(step.selector, timeoutMs, idx, { requireVisible });
-      const el = tbrgGetElement(step.selector, idx);
+      const clickText = typeof step.clickText === 'string' ? step.clickText.trim() : '';
+      const clickTextSelector =
+        typeof step.clickTextSelector === 'string' && step.clickTextSelector.trim()
+          ? step.clickTextSelector.trim()
+          : 'li';
+      let el;
+      if (clickText) {
+        await tbrgWaitForSelector(step.selector, timeoutMs, 0, { requireVisible });
+        el = await tbrgWaitForClickText(
+          step.selector,
+          clickTextSelector,
+          clickText,
+          timeoutMs,
+          idx,
+          requireVisible
+        );
+      } else {
+        await tbrgWaitForSelector(step.selector, timeoutMs, idx, { requireVisible });
+        el = tbrgGetElement(step.selector, idx);
+      }
+      const keepHoverSelector =
+        typeof step.keepHoverSelector === 'string' ? step.keepHoverSelector.trim() : '';
+      if (keepHoverSelector) {
+        tbrgApplyKeepHover(keepHoverSelector, { hoverParent: step.keepHoverParent === true });
+      }
       try {
         el.scrollIntoView({ block: 'center', inline: 'nearest' });
       } catch (_error) {
         // Best effort before click.
+      }
+      if (keepHoverSelector) {
+        tbrgApplyKeepHover(keepHoverSelector, { hoverParent: step.keepHoverParent === true });
       }
       const preClickDelayMs = Number(step.preClickDelayMs) > 0 ? Number(step.preClickDelayMs) : 0;
       if (preClickDelayMs > 0) {
@@ -1436,7 +1838,7 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
     }
     const offset = Number(progressReporting.completedStepsOffset) || 0;
     const totalOverall = Number(progressReporting.totalStepsOverall) || 0;
-    const okCount = stepResults.filter((entry) => entry.ok).length;
+    const okCount = stepResults.filter((entry) => entry.ok && !entry.repeatWrapped).length;
     const completedSteps = offset + okCount;
     const lastOk = stepResults.filter((entry) => entry.ok).slice(-1)[0];
     try {
@@ -1470,30 +1872,47 @@ if (self.__TBRG_MESSAGE_HANDLER__) {
       : template.steps;
 
     try {
+      const execCtx = { stepResults, progressReporting };
       for (const step of stepsToRun) {
         const startedAt = tbrgNow();
         try {
-          const stepResult = await tbrgRunStep(step, results);
+          const stepResult = await tbrgRunStep(step, results, execCtx);
           const valueKey = typeof step.value === 'string' ? step.value.trim() : '';
-          if (valueKey) {
+          if (valueKey && !stepResult.repeatWrapped) {
             results[valueKey] = stepResult.value;
           }
-          stepResults.push({
-            id: step.id,
-            value: valueKey || null,
-            taskId: step.__taskId || null,
-            durationMs: tbrgNow() - startedAt,
-            ...stepResult
-          });
+          if (stepResult.repeatWrapped) {
+            stepResults.push({
+              id: step.id,
+              value: null,
+              taskId: step.__taskId || null,
+              durationMs: tbrgNow() - startedAt,
+              ok: true,
+              repeatWrapped: true,
+              repeatSum: stepResult.repeatSum,
+              repeatItems: stepResult.repeatItems
+            });
+          } else {
+            stepResults.push({
+              id: step.id,
+              value: valueKey || null,
+              taskId: step.__taskId || null,
+              durationMs: tbrgNow() - startedAt,
+              ...stepResult
+            });
+          }
         } catch (error) {
-          stepResults.push({
-            id: step.id,
-            value: typeof step.value === 'string' ? step.value.trim() || null : null,
-            taskId: step.__taskId || null,
-            durationMs: tbrgNow() - startedAt,
-            ok: false,
-            error: error.message || String(error)
-          });
+          const isRepeatEach = String(step.type || '').trim() === 'repeat' && String(step.operator || '').trim() === 'each';
+          if (!isRepeatEach) {
+            stepResults.push({
+              id: step.id,
+              value: typeof step.value === 'string' ? step.value.trim() || null : null,
+              taskId: step.__taskId || null,
+              durationMs: tbrgNow() - startedAt,
+              ok: false,
+              error: error.message || String(error)
+            });
+          }
           if (stopOnFailure) {
             tbrgMaybeReportStepProgress(progressReporting, stepResults);
             break;

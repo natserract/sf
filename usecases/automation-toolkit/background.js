@@ -138,6 +138,131 @@ function tbrgPickStepsArray(template) {
   return Array.isArray(template.steps) ? template.steps : [];
 }
 
+function tbrgStepFrameUrlIncludes(step, taskFrameCtx) {
+  if (Object.prototype.hasOwnProperty.call(step, 'frameUrlIncludes')) {
+    return typeof step.frameUrlIncludes === 'string' ? step.frameUrlIncludes.trim() : '';
+  }
+  return taskFrameCtx.frameUrlIncludes;
+}
+
+function tbrgStepFrameDiffersFromTask(step, taskFrameCtx) {
+  if (!step || typeof step !== 'object') {
+    return false;
+  }
+  if (Object.prototype.hasOwnProperty.call(step, 'frameUrlIncludes')) {
+    const stepNeedle = typeof step.frameUrlIncludes === 'string' ? step.frameUrlIncludes.trim() : '';
+    const taskDefault = taskFrameCtx.frameUrlIncludes;
+    if (stepNeedle !== taskDefault) {
+      return true;
+    }
+  }
+  if (step.type === 'repeat' && step.operator === 'each' && Array.isArray(step.steps)) {
+    return step.steps.some((sub) => tbrgStepFrameDiffersFromTask(sub, taskFrameCtx));
+  }
+  return false;
+}
+
+function tbrgTaskUsesPerStepFrames(task, taskFrameCtx) {
+  const steps = Array.isArray(task.steps) ? task.steps : [];
+  return steps.some((step) => tbrgStepFrameDiffersFromTask(step, taskFrameCtx));
+}
+
+async function tbrgExecuteSingleTaskOnTab(tabId, template, task, frameCtx, progressReporting, runGeneration) {
+  const steps = Array.isArray(task.steps) ? task.steps : [];
+  if (steps.length === 0) {
+    return {
+      ok: true,
+      results: {},
+      stepResults: [],
+      taskResults: [{ id: task.id || 'task', ok: true, steps: [] }],
+      url: '',
+      title: ''
+    };
+  }
+
+  const perStepFrames = tbrgTaskUsesPerStepFrames(task, frameCtx);
+  if (!perStepFrames) {
+    const frameTemplate = { ...template, ...frameCtx };
+    const targetFrameId = await tbrgResolveTargetFrameId(tabId, frameTemplate);
+    await tbrgExecuteScriptInFrame(tabId, ['content_runner.js'], targetFrameId);
+    tbrgAssertRunActive(runGeneration);
+    return tbrgSendTabMessageWithFrameBootstrap(tabId, targetFrameId, {
+      type: 'TBRG_EXECUTE_TEMPLATE',
+      template: { tasks: [task], slides: [] },
+      progressReporting
+    }, TBRG_USER_INPUT_TIMEOUT_MS);
+  }
+
+  const merged = {
+    ok: true,
+    results: {},
+    stepResults: [],
+    taskResults: [],
+    url: '',
+    title: ''
+  };
+
+  for (let stepIndex = 0; stepIndex < steps.length; stepIndex += 1) {
+    tbrgAssertRunActive(runGeneration);
+    const step = steps[stepIndex];
+    const stepFrameNeedle = tbrgStepFrameUrlIncludes(step, frameCtx);
+    const frameTemplate = {
+      ...template,
+      ...frameCtx,
+      frameUrlIncludes: stepFrameNeedle
+    };
+    const targetFrameId = await tbrgResolveTargetFrameId(tabId, frameTemplate);
+    await tbrgExecuteScriptInFrame(tabId, ['content_runner.js'], targetFrameId);
+    tbrgAssertRunActive(runGeneration);
+
+    const partial = await tbrgSendTabMessageWithFrameBootstrap(tabId, targetFrameId, {
+      type: 'TBRG_EXECUTE_TEMPLATE',
+      template: { tasks: [{ ...task, steps: [step] }], slides: [] },
+      progressReporting: progressReporting
+        ? {
+          ...progressReporting,
+          completedStepsOffset:
+            (Number(progressReporting.completedStepsOffset) || 0) + stepIndex
+        }
+        : undefined
+    }, TBRG_USER_INPUT_TIMEOUT_MS);
+    tbrgAssertRunActive(runGeneration);
+
+    if (!partial?.ok) {
+      throw new Error(partial?.error || 'Content execution failed.');
+    }
+
+    Object.assign(merged.results, partial.results || {});
+    merged.stepResults.push(...(partial.stepResults || []));
+    merged.url = partial.url || merged.url;
+    merged.title = partial.title || merged.title;
+
+    const failed = (partial.stepResults || []).filter((s) => !s.ok);
+    if (failed.length > 0) {
+      merged.ok = false;
+      merged.taskResults.push({
+        id: task.id || 'task',
+        ok: false,
+        steps: merged.stepResults
+      });
+      const failedSummary = failed
+        .slice(0, 3)
+        .map((s) => `${s.id || 'unknown'}: ${s.error || 'step failed'}`)
+        .join('; ');
+      throw new Error(
+        `Template execution failed (${failed.length} step failure${failed.length === 1 ? '' : 's'}): ${failedSummary}`
+      );
+    }
+  }
+
+  merged.taskResults.push({
+    id: task.id || 'task',
+    ok: merged.stepResults.every((s) => s.ok),
+    steps: merged.stepResults
+  });
+  return merged;
+}
+
 async function tbrgExecuteTasksSequentially(template, onProgress, runGeneration, progressTabId) {
   const merged = {
     ok: true,
@@ -152,7 +277,8 @@ async function tbrgExecuteTasksSequentially(template, onProgress, runGeneration,
   let completedTasks = 0;
   let completedSteps = 0;
   const totalStepsAll = template.tasks.reduce(
-    (acc, t) => acc + (Array.isArray(t.steps) ? t.steps.length : 0),
+    (acc, t) =>
+      acc + (Array.isArray(t.steps) ? t.steps.reduce((a, s) => a + tbrgCountStepWeight(s), 0) : 0),
     0
   );
 
@@ -166,16 +292,12 @@ async function tbrgExecuteTasksSequentially(template, onProgress, runGeneration,
     await tbrgExecuteScript(targetTab.id, ['content_runner.js'], true);
 
     const frameCtx = tbrgFrameContextForTask(template, task);
-    const frameTemplate = { ...template, ...frameCtx };
-
-    const targetFrameId = await tbrgResolveTargetFrameId(targetTab.id, frameTemplate);
-
-    await tbrgExecuteScriptInFrame(targetTab.id, ['content_runner.js'], targetFrameId);
-    tbrgAssertRunActive(runGeneration);
-    const partial = await tbrgSendTabMessageWithFrameBootstrap(targetTab.id, targetFrameId, {
-      type: 'TBRG_EXECUTE_TEMPLATE',
-      template: { tasks: [task], slides: [] },
-      progressReporting: {
+    const partial = await tbrgExecuteSingleTaskOnTab(
+      targetTab.id,
+      template,
+      task,
+      frameCtx,
+      {
         templateId: template.id,
         progressTabId,
         completedStepsOffset: stepsOffsetBeforeTask,
@@ -184,8 +306,9 @@ async function tbrgExecuteTasksSequentially(template, onProgress, runGeneration,
         totalTasks,
         currentTaskId: task.id || null,
         currentTaskName: task.name || null
-      }
-    }, TBRG_USER_INPUT_TIMEOUT_MS);
+      },
+      runGeneration
+    );
     tbrgAssertRunActive(runGeneration);
 
     if (!partial?.ok) {
@@ -198,8 +321,10 @@ async function tbrgExecuteTasksSequentially(template, onProgress, runGeneration,
     merged.url = partial.url || merged.url;
     merged.title = partial.title || merged.title;
 
-    const taskStepTotal = Array.isArray(task.steps) ? task.steps.length : 0;
-    const taskStepCompleted = (partial.stepResults || []).filter((step) => step.ok).length;
+    const taskStepTotal = Array.isArray(task.steps)
+      ? task.steps.reduce((a, s) => a + tbrgCountStepWeight(s), 0)
+      : 0;
+    const taskStepCompleted = tbrgStepResultsProgressOkCount(partial.stepResults);
     completedTasks += 1;
     completedSteps += taskStepCompleted;
     if (typeof onProgress === 'function') {
@@ -210,7 +335,8 @@ async function tbrgExecuteTasksSequentially(template, onProgress, runGeneration,
         completedSteps,
         currentTaskId: task.id || null,
         currentTaskName: task.name || null,
-        lastCompletedStepId: (partial.stepResults || []).filter((step) => step.ok).slice(-1)[0]?.id || null,
+        lastCompletedStepId:
+          (partial.stepResults || []).filter((step) => step.ok && !step.repeatWrapped).slice(-1)[0]?.id || null,
         taskStepTotal,
         taskStepCompleted
       });
@@ -626,19 +752,46 @@ async function tbrgClearBadge() {
   await tbrgSetActionBadge('', null);
 }
 
+function tbrgCountStepWeight(step) {
+  if (!step || typeof step !== 'object') {
+    return 1;
+  }
+  if (
+    step.type === 'repeat' &&
+    step.operator === 'each' &&
+    Array.isArray(step.items) &&
+    Array.isArray(step.steps)
+  ) {
+    return step.items.length * step.steps.length;
+  }
+  return 1;
+}
+
 function tbrgCountTaskAndStepTotals(template) {
   const tasks = Array.isArray(template.tasks) ? template.tasks : [];
   if (tasks.length > 0) {
     return {
       totalTasks: tasks.length,
-      totalSteps: tasks.reduce((acc, task) => acc + (Array.isArray(task.steps) ? task.steps.length : 0), 0)
+      totalSteps: tasks.reduce(
+        (acc, task) =>
+          acc +
+          (Array.isArray(task.steps) ? task.steps.reduce((a, s) => a + tbrgCountStepWeight(s), 0) : 0),
+        0
+      )
     };
   }
   const steps = Array.isArray(template.steps) ? template.steps : [];
   return {
     totalTasks: steps.length > 0 ? 1 : 0,
-    totalSteps: steps.length
+    totalSteps: steps.reduce((a, s) => a + tbrgCountStepWeight(s), 0)
   };
+}
+
+function tbrgStepResultsProgressOkCount(stepResults) {
+  if (!Array.isArray(stepResults)) {
+    return 0;
+  }
+  return stepResults.filter((step) => step.ok && !step.repeatWrapped).length;
 }
 
 async function tbrgNotifyJobProgress(payload) {
@@ -676,13 +829,13 @@ async function tbrgRenderPageProgress(tabId, payload) {
         ? 'Automation failed'
         : stage === 'cancelled'
           ? 'Automation stopped'
-        : 'Automation running';
+          : 'Automation running';
   const detail =
     stage === 'error'
       ? String(payload?.error || 'Unknown error')
       : stage === 'cancelled'
         ? String(payload?.error || 'Stopped by user.')
-      : `Steps ${done}/${total} (${percent}%)`;
+        : `Steps ${done}/${total} (${percent}%)`;
 
   await tbrgExecuteScriptFunction(
     tabId,
@@ -1232,9 +1385,10 @@ async function tbrgRunJob(templateId, runGeneration) {
         templateId: template.id,
         completedTasks: totalTasks,
         totalTasks,
-        completedSteps: (executionResult.stepResults || []).filter((step) => step.ok).length,
+        completedSteps: tbrgStepResultsProgressOkCount(executionResult.stepResults),
         totalSteps,
-        lastCompletedStepId: (executionResult.stepResults || []).filter((step) => step.ok).slice(-1)[0]?.id || null
+        lastCompletedStepId:
+          (executionResult.stepResults || []).filter((step) => step.ok && !step.repeatWrapped).slice(-1)[0]?.id || null
       };
       await tbrgNotifyJobProgress(runningPayload);
       await tbrgRenderPageProgress(progressTabId, runningPayload);
@@ -1242,6 +1396,7 @@ async function tbrgRunJob(templateId, runGeneration) {
 
     tbrgAssertRunActive(runGeneration);
     const screenshotDownloads = await tbrgDownloadScreenshotExports(template, executionResult.results);
+    // const screenshotDownloads = [];
 
     if (template.runMode === 'embedAfter') {
       tbrgAssertRunActive(runGeneration);
@@ -1256,7 +1411,7 @@ async function tbrgRunJob(templateId, runGeneration) {
         templateId: template.id,
         completedTasks: totalTasks,
         totalTasks,
-        completedSteps: (executionResult.stepResults || []).filter((step) => step.ok).length,
+        completedSteps: tbrgStepResultsProgressOkCount(executionResult.stepResults),
         totalSteps,
         downloadFilename: ''
       };
@@ -1303,7 +1458,7 @@ async function tbrgRunJob(templateId, runGeneration) {
       templateId: template.id,
       completedTasks: totalTasks,
       totalTasks,
-      completedSteps: (executionResult.stepResults || []).filter((step) => step.ok).length,
+      completedSteps: tbrgStepResultsProgressOkCount(executionResult.stepResults),
       totalSteps,
       downloadFilename: download.filename
     };

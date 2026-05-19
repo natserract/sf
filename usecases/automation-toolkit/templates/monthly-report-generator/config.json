@@ -38,34 +38,38 @@
           "selector": "#navbar-scrollable > ul > li:nth-child(1) > a.ng-scope",
           "requireVisible": true,
           "timeoutMs": 120000,
-          "hoverSettleMs": 900
+          "hoverDispatch": "synthetic",
+          "hoverParent": true,
+          "hoverUntilSelector": "#navbar .navbar-dropdowns .dropdown-menu.active",
+          "hoverUntilChildSelector": "a[href*=\"reports/productConsumption\"]",
+          "hoverUntilTimeoutMs": 4000,
+          "hoverRetries": 5,
+          "hoverSettleMs": 400,
+          "hoverFallbackClick": true
         },
         {
           "type": "waitFor",
           "operator": "exists",
-          "selector": "#navbar > div.navbar-dropdowns > div:nth-child(1) > div.dropdown-menu.active",
+          "selector": "#navbar .navbar-dropdowns .dropdown-menu.active a[href*=\"reports/productConsumption\"]",
           "requireVisible": true,
-          "timeoutMs": 60000
-        },
-        {
-          "type": "waitFor",
-          "operator": "exists",
-          "selector": "#navbar > div.navbar-dropdowns > div:nth-child(1) > div.dropdown-menu.active a[href*=\"dataset/dsjdsports/reports/productConsumption\"]",
-          "requireVisible": true,
-          "timeoutMs": 60000,
-          "matchIndex": 0
+          "timeoutMs": 30000,
+          "matchIndex": 0,
+          "keepHoverSelector": "#navbar-scrollable > ul > li:nth-child(1) > a.ng-scope",
+          "keepHoverParent": true
         },
         {
           "id": "click_personalization_consumption_nav",
           "type": "dom",
           "operator": "click",
-          "selector": "#navbar > div.navbar-dropdowns > div:nth-child(1) > div.dropdown-menu.active a[href*=\"dataset/dsjdsports/reports/productConsumption\"]",
+          "selector": "#navbar .navbar-dropdowns .dropdown-menu.active a[href*=\"reports/productConsumption\"]",
           "matchIndex": 0,
           "requireVisible": true,
           "timeoutMs": 120000,
           "preClickDelayMs": 200,
           "postClickDelayMs": 2800,
-          "clickDispatch": "synthetic"
+          "clickDispatch": "synthetic",
+          "keepHoverSelector": "#navbar-scrollable > ul > li:nth-child(1) > a.ng-scope",
+          "keepHoverParent": true
         },
         {
           "type": "waitFor",
@@ -101,14 +105,150 @@
           "timeoutMs": 120000
         },
         {
-          "id": "prog_digital_members_read",
+          "id": "click_user_segments_nav",
           "type": "dom",
-          "operator": "readText",
-          "value": "PROG_DIGITAL_MEMBERS",
-          "selector": "#muvUsageReportGrid > table > tbody > tr:nth-child(1) > td:nth-child(3)",
-          "matchIndex": 0,
+          "operator": "click",
+          "selector": "#navbar-scrollable > ul.nav > li.hasDropdown > a[role=\"button\"]",
+          "matchIndex": 15,
           "requireVisible": true,
-          "timeoutMs": 120000
+          "timeoutMs": 120000,
+          "preClickDelayMs": 200,
+          "postClickDelayMs": 2800,
+          "clickDispatch": "synthetic",
+          "frameUrlIncludes": "pterafone.us-4.evergage.com"
+        },
+        {
+          "id": "each_dataset_prog_digital_members",
+          "type": "repeat",
+          "operator": "each",
+          "timeoutMs": 600000,
+          "variable": "DATASET_LABEL",
+          "items": [
+            "Eraspace Dataset",
+            "JDSports Dataset",
+            "iBox Dataset",
+            "Erafone Dataset"
+          ],
+          "sumInto": "PROG_DIGITAL_MEMBERS",
+          "sumFromKey": "_LOOP_MEMBER_COUNT_RAW",
+          "steps": [
+            {
+              "type": "waitFor",
+              "operator": "exists",
+              "selector": "#dataset-selector > span",
+              "requireVisible": true,
+              "timeoutMs": 120000,
+              "frameUrlIncludes": "pterafone.us-4.evergage.com"
+            },
+            {
+              "id": "click_dataset_selector",
+              "type": "dom",
+              "operator": "click",
+              "selector": "#dataset-selector > span",
+              "requireVisible": true,
+              "timeoutMs": 120000,
+              "preClickDelayMs": 200,
+              "postClickDelayMs": 500,
+              "clickDispatch": "synthetic",
+              "frameUrlIncludes": "pterafone.us-4.evergage.com"
+            },
+            {
+              "type": "waitFor",
+              "operator": "exists",
+              "selector": "body > div.k-animation-container > #datasetSelectorNavBarV2-list",
+              "requireVisible": true,
+              "timeoutMs": 120000,
+              "frameUrlIncludes": "pterafone.us-4.evergage.com"
+            },
+            {
+              "type": "waitFor",
+              "operator": "exists",
+              "selector": "#datasetSelectorNavBarV2_listbox",
+              "requireVisible": true,
+              "timeoutMs": 120000,
+              "frameUrlIncludes": "pterafone.us-4.evergage.com"
+            },
+            {
+              "id": "click_dataset_list_item",
+              "type": "dom",
+              "operator": "click",
+              "selector": "#datasetSelectorNavBarV2_listbox",
+              "clickText": "{{DATASET_LABEL}}",
+              "clickTextSelector": "li.k-item",
+              "requireVisible": true,
+              "timeoutMs": 120000,
+              "preClickDelayMs": 100,
+              "postClickDelayMs": 2000,
+              "clickDispatch": "synthetic",
+              "frameUrlIncludes": "pterafone.us-4.evergage.com"
+            },
+            {
+              "type": "waitFor",
+              "operator": "exists",
+              "selector": "#segmentFolders .k-grid-content table tbody",
+              "clickText": "Monthly Report",
+              "clickTextSelector": "div.dropTarget",
+              "requireVisible": true,
+              "timeoutMs": 120000,
+              "frameUrlIncludes": "pterafone.us-4.evergage.com"
+            },
+            {
+              "id": "click_monthly_report_folder",
+              "type": "dom",
+              "operator": "click",
+              "selector": "#segmentFolders .k-grid-content table tbody",
+              "clickText": "Monthly Report",
+              "clickTextSelector": "div.dropTarget",
+              "requireVisible": true,
+              "timeoutMs": 120000,
+              "preClickDelayMs": 200,
+              "postClickDelayMs": 1500,
+              "clickDispatch": "synthetic",
+              "frameUrlIncludes": "pterafone.us-4.evergage.com"
+            },
+            {
+              "type": "waitFor",
+              "operator": "exists",
+              "selector": "#segments .k-grid-content table tbody",
+              "requireVisible": true,
+              "timeoutMs": 120000,
+              "frameUrlIncludes": "pterafone.us-4.evergage.com"
+            },
+            {
+              "id": "click_member_active_2026_segment",
+              "type": "dom",
+              "operator": "click",
+              "selector": "#segments .k-grid-content table tbody",
+              "clickText": "Member Active 2026",
+              "clickTextSelector": "span.segmentName",
+              "requireVisible": true,
+              "timeoutMs": 120000,
+              "preClickDelayMs": 200,
+              "postClickDelayMs": 2000,
+              "clickDispatch": "synthetic",
+              "frameUrlIncludes": "pterafone.us-4.evergage.com"
+            },
+            {
+              "type": "waitFor",
+              "operator": "exists",
+              "selector": "div.previewSection td.members.ng-binding",
+              "requireVisible": true,
+              "timeoutMs": 120000,
+              "frameUrlIncludes": "pterafone.us-4.evergage.com"
+            },
+            {
+              "id": "prog_digital_members_read",
+              "type": "dom",
+              "operator": "readText",
+              "value": "_LOOP_MEMBER_COUNT_RAW",
+              "selector": "div.previewSection td.members.ng-binding",
+              "matchIndex": 0,
+              "requireVisible": true,
+              "timeoutMs": 120000,
+              "textMode": "textContent",
+              "frameUrlIncludes": "pterafone.us-4.evergage.com"
+            }
+          ]
         }
       ]
     }
