@@ -75,10 +75,14 @@ func (c *Client) FetchAllContactsPage(ctx context.Context, auth Auth, p FetchPag
 	return out, resp, nil
 }
 
-func (c *Client) FetchMobileConnectPage(ctx context.Context, auth Auth, p FetchPageParams) (Response, *http.Response, error) {
+func (c *Client) FetchChannelPage(ctx context.Context, auth Auth, p FetchPageParams) (Response, *http.Response, error) {
+	op := p.FilterConditionOperator
+	if op == "" {
+		op = "Is"
+	}
 	u, bodyJSON, err := c.buildRequestURLAndBody("/contactsmeta/fuelapi/contacts/v1/addresses/search/channel/", p.PageSize, p.Page, p.OrderBy, map[string]string{
-		"filterConditionOperator": "Is",
-		"filterConditionValue":    "MOBILE",
+		"filterConditionOperator": op,
+		"filterConditionValue":    p.FilterConditionValue,
 	})
 	if err != nil {
 		return Response{}, nil, err
@@ -102,6 +106,9 @@ type FetchCountParams struct {
 	PageSize int
 	Page     int
 	OrderBy  string
+
+	FilterConditionOperator string
+	FilterConditionValue    string
 }
 
 func (c *Client) FetchAllContactsCount(ctx context.Context, auth Auth, p FetchCountParams) (CountResponse, *http.Response, error) {
@@ -136,7 +143,7 @@ func (c *Client) FetchAllContactsCount(ctx context.Context, auth Auth, p FetchCo
 	return out, resp, nil
 }
 
-func (c *Client) FetchMobileConnectCount(ctx context.Context, auth Auth, p FetchCountParams) (CountResponse, *http.Response, error) {
+func (c *Client) FetchChannelCount(ctx context.Context, auth Auth, p FetchCountParams) (CountResponse, *http.Response, error) {
 	if p.PageSize <= 0 {
 		p.PageSize = 25
 	}
@@ -154,7 +161,7 @@ func (c *Client) FetchMobileConnectCount(ctx context.Context, auth Auth, p Fetch
 					map[string]any{
 						"customerDataDefinitionID": 104,
 						"operator":                 "Equal",
-						"values":                   []string{"MOBILE"},
+						"values":                   []string{p.FilterConditionValue},
 					},
 				},
 			},
@@ -163,7 +170,6 @@ func (c *Client) FetchMobileConnectCount(ctx context.Context, auth Auth, p Fetch
 	if err != nil {
 		return CountResponse{}, nil, err
 	}
-	fmt.Println("URL: ", u.String())
 	raw, resp, err := c.doJSONRequest(ctx, auth, u, bodyJSON)
 	if err != nil {
 		return CountResponse{}, resp, err

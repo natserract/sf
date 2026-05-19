@@ -109,6 +109,8 @@ Behavior:
 
 ### Fetch Everything (default, no run id needed)
 
+Unfiltered — all contacts:
+
 ```bash
 go run . worker \
   --bearer-token "<TOKEN>" \
@@ -116,11 +118,39 @@ go run . worker \
   --cookie "<COOKIE>"
 ```
 
-When `--run-id` is omitted, the CLI auto-creates a new run, fetches `totalCount`, pre-seeds all pages as pending, and immediately processes them until completed.
+When `--run-id` is omitted, the CLI reuses the latest run for the same filter (or creates one), fetches `totalCount`, pre-seeds missing pages as pending, and immediately processes them until completed.
 
-Before worker processing starts, auth is verified via preflight ping. If auth is invalid, process exits.
+Before worker processing starts, auth is verified via preflight. If auth is invalid, process exits.
+
+### Channel filter (MOBILE or PUSH)
+
+Use a single flag to fetch contacts filtered by channel. Filter is stored on the run row (`filter=Is:MOBILE` or `filter=Is:PUSH`) and used automatically on resume.
+
+MOBILE:
+
+```bash
+go run . worker \
+  --filter-value MOBILE \
+  --bearer-token "<TOKEN>" \
+  --csrf-token "<CSRF>" \
+  --cookie "<COOKIE>"
+```
+
+PUSH:
+
+```bash
+go run . worker \
+  --filter-value PUSH \
+  --bearer-token "<TOKEN>" \
+  --csrf-token "<CSRF>" \
+  --cookie "<COOKIE>"
+```
+
+Re-running `worker --filter-value MOBILE` (or `PUSH`) without `--run-id` resumes the latest run for that filter and only seeds new tail pages if the contact count grew.
 
 ### Create Run
+
+Unfiltered:
 
 ```bash
 go run . start-run \
@@ -130,10 +160,22 @@ go run . start-run \
   --cookie "<COOKIE>"
 ```
 
+Channel-filtered:
+
+```bash
+go run . start-run \
+  --filter-value MOBILE \
+  --started-page 1 \
+  --bearer-token "<TOKEN>" \
+  --csrf-token "<CSRF>" \
+  --cookie "<COOKIE>"
+```
+
 Output example:
 
 ```text
-run_id=8f5f91d3-1d8f-4aa3-a5ca-89f8f4b00b7c total_count=19602287 total_pages=784092 seeded_rows=784092 started_page=1
+run_id=8f5f91d3-1d8f-4aa3-a5ca-89f8f4b00b7c total_count=19602287 total_pages=784092 seeded_rows=784092 started_page=1 filter=Is:
+run_id=abc12345-6789-6789-6789-0123456789ab total_count=1500000 total_pages=60000 seeded_rows=60000 started_page=1 filter=Is:MOBILE
 ```
 
 ### Start Worker (single process)
@@ -157,18 +199,30 @@ Workers coordinate through Postgres row locking and will not process the same pa
 go run . status --run-id <RUN_ID>
 ```
 
+Shows `filter=Is:MOBILE`, `filter=Is:PUSH`, or `filter=Is:` for unfiltered runs.
+
 ### Resume
+
+Rewind partial batch progress and continue the same run (uses the filter stored in Postgres):
 
 ```bash
 go run . resume --run-id <uuid> \
              --bearer-token … --csrf-token … --cookie
 ```
 
+Optional override for the rewind point:
+
+```bash
+go run . resume --run-id <uuid> --from-batch 7 \
+             --bearer-token … --csrf-token … --cookie
+```
+
 ## Resume After Crash / CTRL+C
 
 - Stop workers at any time.
-- Start worker command again with same `--run-id`.
-- Remaining pending pages and retry pages continue.
+- **Same run id:** start `worker --run-id <RUN_ID> …` again — remaining pending pages and retry pages continue.
+- **Same channel filter:** start `worker --filter-value MOBILE …` (or `PUSH`) without `--run-id` — picks up the latest run for that filter.
+- **Partial batch after crash:** use `resume --run-id <uuid> …` to drop contact keys from the last exit batch and re-fetch those pages.
 - Stale in-progress jobs are reaped back to pending using `LOCK_TIMEOUT_SECONDS`.
 
 ### CSV validation resume (`validate-all-smfc`)

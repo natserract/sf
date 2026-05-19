@@ -93,3 +93,23 @@ if __name__ == "__main__":
         f" --cookie '{cookie}'"
     )
     print(one_liner_history)
+    print("\n")
+
+    one_liner_filter_push = (
+        f"go run -race . worker"
+        f" --bearer-token {bearer}"
+        f" --csrf-token {csrf}"
+        f" --cookie '{cookie}'"
+        f" --filter-value PUSH"
+    )
+    print(one_liner_filter_push)
+    print("\n")
+
+    one_liner_filter_mobile = (
+        f"go run -race . worker"
+        f" --bearer-token {bearer}"
+        f" --csrf-token {csrf}"
+        f" --cookie '{cookie}'"
+        f" --filter-value MOBILE"
+    )
+    print(one_liner_filter_mobile)

@@ -101,9 +101,6 @@ func (p *Processor) Validate() error {
 	if p.Options.FilterOperator == "" {
 		p.Options.FilterOperator = "Is"
 	}
-	if p.Options.FilterValue == "" {
-		p.Options.FilterValue = "MOBILE"
-	}
 	if p.Options.OrderBy == "" {
 		p.Options.OrderBy = "contactKey ASC"
 	}
@@ -246,15 +243,12 @@ func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int,
 		FilterConditionValue:    run.FilterValue,
 	}
 	usedAuth := p.AuthMgr.GetAuth()
-	fetchPage := p.API.FetchAllContactsPage
-	if run.FilterOperator == "Is" && strings.EqualFold(run.FilterValue, "MOBILE") {
-		fetchPage = p.API.FetchMobileConnectPage
-	}
+	fetchPage := p.pageFetcher(run)
 	resp, httpResp, err := fetchPage(ctx, usedAuth, params)
 	if err != nil {
 		if httpResp != nil && httpResp.StatusCode == http.StatusForbidden {
 			log.Printf("[PROCESS] page=%d got 403, attempting re-auth runID=%s", pageNumber, run.ID)
-			if reauthErr := p.reauthenticate(ctx, usedAuth); reauthErr != nil {
+			if reauthErr := p.reauthenticate(ctx, usedAuth, run); reauthErr != nil {
 				return p.handleProcessError(ctx, run.ID, pageNumber, attempts, httpResp, reauthErr)
 			}
 			log.Printf("[PROCESS] page=%d re-auth succeeded, retrying fetch runID=%s", pageNumber, run.ID)
@@ -304,13 +298,35 @@ func (p *Processor) processPage(ctx context.Context, run db.Run, pageNumber int,
 	return nil
 }
 
-func (p *Processor) reauthenticate(ctx context.Context, failedAuth api.Auth) error {
+func (p *Processor) pageFetcher(run db.Run) func(context.Context, api.Auth, api.FetchPageParams) (api.Response, *http.Response, error) {
+	if run.FilterValue != "" {
+		return p.API.FetchChannelPage
+	}
+	return p.API.FetchAllContactsPage
+}
+
+func (p *Processor) reauthenticate(ctx context.Context, failedAuth api.Auth, run db.Run) error {
 	return p.AuthMgr.ReauthenticateIfUnchanged(ctx, failedAuth, func(ctx context.Context, next api.Auth) error {
-		resp, err := p.API.PingAuth(ctx, next, api.PingAuthParams{
-			PageSize:                1,
-			FilterConditionOperator: p.Options.FilterOperator,
-			FilterConditionValue:    p.Options.FilterValue,
-			OrderBy:                 p.Options.OrderBy,
+		if run.FilterValue != "" {
+			_, resp, err := p.API.FetchChannelPage(ctx, next, api.FetchPageParams{
+				PageSize:                1,
+				Page:                    1,
+				OrderBy:                 p.Options.OrderBy,
+				FilterConditionOperator: run.FilterOperator,
+				FilterConditionValue:    run.FilterValue,
+			})
+			if err == nil {
+				return nil
+			}
+			if api.IsAuthError(resp) {
+				return fmt.Errorf("http %d auth failed", resp.StatusCode)
+			}
+			return err
+		}
+		_, resp, err := p.API.FetchAllContactsCount(ctx, next, api.FetchCountParams{
+			PageSize: 1,
+			Page:     1,
+			OrderBy:  p.Options.OrderBy,
 		})
 		if err == nil {
 			return nil

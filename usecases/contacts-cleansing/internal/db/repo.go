@@ -184,13 +184,21 @@ from runs where id = $1
 }
 
 // GetLatestRunID returns the ID of the most recently created run, or ("", nil)
-// if no runs exist yet. Used by createRunAndSeedAllPages to top-up an existing
-// run instead of creating a duplicate.
+// if no runs exist yet. Used to top-up an existing unfiltered run instead of
+// creating a duplicate.
 func (r *Repo) GetLatestRunID(ctx context.Context) (string, error) {
+	return r.GetLatestRunIDByFilter(ctx, "Is", "")
+}
+
+// GetLatestRunIDByFilter returns the most recently created run matching the
+// given filter, or ("", nil) if none exists.
+func (r *Repo) GetLatestRunIDByFilter(ctx context.Context, filterOperator, filterValue string) (string, error) {
 	var id string
 	err := r.pool.QueryRow(ctx, `
-select id::text from runs order by created_at desc limit 1
-`).Scan(&id)
+select id::text from runs
+where filter_operator = $1 and filter_value = $2
+order by created_at desc limit 1
+`, filterOperator, filterValue).Scan(&id)
 	if err == pgx.ErrNoRows {
 		return "", nil
 	}

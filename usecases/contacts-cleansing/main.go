@@ -69,14 +69,6 @@ func main() {
 		auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
 		return cfg, auth, nil
 	}))
-	root.AddCommand(newStartRunMobileContactCmd(func() (config.Config, api.Auth, error) {
-		cfg, err := config.FromEnvFull()
-		if err != nil {
-			return config.Config{}, api.Auth{}, err
-		}
-		auth := api.Auth{BearerToken: bearerToken, CsrfToken: csrfToken, Cookie: cookie}
-		return cfg, auth, nil
-	}))
 	root.AddCommand(newWorkerCmd(func() (config.Config, api.Auth, error) {
 		cfg, err := config.FromEnvFull()
 		if err != nil {
@@ -194,6 +186,27 @@ func newRestAPICmd(build func() (config.Config, error)) *cobra.Command {
 	}
 }
 
+func normalizeChannelFilter(value string) (operator, normalizedValue string, err error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "Is", "", nil
+	}
+	upper := strings.ToUpper(value)
+	switch upper {
+	case "MOBILE", "PUSH":
+		return "Is", upper, nil
+	default:
+		return "", "", fmt.Errorf("--filter-value must be MOBILE or PUSH, got %q", value)
+	}
+}
+
+func countFetcherFor(client *api.Client, filterValue string) countFetcher {
+	if filterValue == "" {
+		return client.FetchAllContactsCount
+	}
+	return client.FetchChannelCount
+}
+
 func newFetchOnceCmd(build func() (api.Auth, config.Config, *api.Client, error)) *cobra.Command {
 	var (
 		page           int
@@ -224,9 +237,13 @@ func newFetchOnceCmd(build func() (api.Auth, config.Config, *api.Client, error))
 			if filterOperator != "" {
 				fo = filterOperator
 			}
-			fv := "MOBILE"
+			fv := ""
 			if filterValue != "" {
-				fv = filterValue
+				var err error
+				fo, fv, err = normalizeChannelFilter(filterValue)
+				if err != nil {
+					return err
+				}
 			}
 
 			params := api.FetchPageParams{
@@ -242,7 +259,13 @@ func newFetchOnceCmd(build func() (api.Auth, config.Config, *api.Client, error))
 					page, ps, ob, fo, fv)
 			}
 
-			resp, httpResp, err := client.FetchAllContactsPage(cmd.Context(), auth, params)
+			var resp api.Response
+			var httpResp *http.Response
+			if fv != "" {
+				resp, httpResp, err = client.FetchChannelPage(cmd.Context(), auth, params)
+			} else {
+				resp, httpResp, err = client.FetchAllContactsPage(cmd.Context(), auth, params)
+			}
 			if err != nil {
 				if httpResp != nil {
 					return fmt.Errorf("http %d: %w", httpResp.StatusCode, err)
@@ -262,7 +285,7 @@ func newFetchOnceCmd(build func() (api.Auth, config.Config, *api.Client, error))
 	cmd.Flags().IntVar(&pageSize, "page-size", 0, "Page size (default: PAGE_SIZE env or 25)")
 	cmd.Flags().StringVar(&orderBy, "order-by", "", "Order-by clause (default: contactKey ASC)")
 	cmd.Flags().StringVar(&filterOperator, "filter-operator", "", "Filter condition operator (default: Is)")
-	cmd.Flags().StringVar(&filterValue, "filter-value", "", "Filter condition value (default: MOBILE)")
+	cmd.Flags().StringVar(&filterValue, "filter-value", "", "Filter condition value: MOBILE or PUSH (default: unfiltered)")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Print request details before fetching")
 	return cmd
 }
@@ -296,6 +319,7 @@ func newMigrateCmd(build func() (config.Config, error)) *cobra.Command {
 
 func newStartRunCmd(build func() (config.Config, api.Auth, error)) *cobra.Command {
 	var startedPage int
+	var filterValue string
 	cmd := &cobra.Command{
 		Use:   "start-run",
 		Short: "Create a run in Postgres and pre-seed all pages as pending",
@@ -311,50 +335,9 @@ func newStartRunCmd(build func() (config.Config, api.Auth, error)) *cobra.Comman
 				return fmt.Errorf("--bearer-token, --csrf-token, and --cookie are required for start-run")
 			}
 
-			pool, err := db.Open(cmd.Context(), cfg.DBDSN)
+			filterOp, filterVal, err := normalizeChannelFilter(filterValue)
 			if err != nil {
 				return err
-			}
-			defer pool.Close()
-
-			if err := db.ApplyMigrations(cmd.Context(), pool); err != nil {
-				return err
-			}
-
-			apiClient := api.NewClient(cfg.APIBaseURL)
-			if err := validateAuthPreflight(cmd.Context(), apiClient, auth, cfg); err != nil {
-				return err
-			}
-
-			repo := db.NewRepo(pool)
-			runID, totalCount, totalPages, seededRows, err := createRunAndSeedAllPages(cmd.Context(), repo, apiClient, auth, cfg)
-			if err != nil {
-				return err
-			}
-
-			fmt.Fprintf(cmd.OutOrStdout(), "run_id=%s total_count=%d total_pages=%d seeded_rows=%d started_page=%d\n", runID, totalCount, totalPages, seededRows, startedPage)
-			return nil
-		},
-	}
-	cmd.Flags().IntVar(&startedPage, "started-page", 1, "Starting page number")
-	return cmd
-}
-
-func newStartRunMobileContactCmd(build func() (config.Config, api.Auth, error)) *cobra.Command {
-	var startedPage int
-	cmd := &cobra.Command{
-		Use:   "start-run-mobile-contact",
-		Short: "Create a mobile-contact run in Postgres and pre-seed all pages as pending",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, auth, err := build()
-			if err != nil {
-				return err
-			}
-			if cfg.DBDSN == "" {
-				return fmt.Errorf("DB_DSN is required")
-			}
-			if auth.BearerToken == "" || auth.CsrfToken == "" || auth.Cookie == "" {
-				return fmt.Errorf("--bearer-token, --csrf-token, and --cookie are required for start-run-mobile-contact")
 			}
 
 			pool, err := db.Open(cmd.Context(), cfg.DBDSN)
@@ -368,27 +351,28 @@ func newStartRunMobileContactCmd(build func() (config.Config, api.Auth, error)) 
 			}
 
 			apiClient := api.NewClient(cfg.APIBaseURL)
-			if err := validateMobileContactAuthPreflight(cmd.Context(), apiClient, auth, cfg); err != nil {
+			if err := validateAuthPreflight(cmd.Context(), apiClient, auth, cfg, filterOp, filterVal); err != nil {
 				return err
 			}
 
 			repo := db.NewRepo(pool)
-			runID, totalCount, totalPages, seededRows, err := createRunAndSeedMobileContactPages(cmd.Context(), repo, apiClient, auth, cfg)
+			runID, totalCount, totalPages, seededRows, err := createRunAndSeedPages(cmd.Context(), repo, apiClient, auth, cfg, countFetcherFor(apiClient, filterVal), filterOp, filterVal, "")
 			if err != nil {
 				return err
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "run_id=%s total_count=%d total_pages=%d seeded_rows=%d started_page=%d\n", runID, totalCount, totalPages, seededRows, startedPage)
+			fmt.Fprintf(cmd.OutOrStdout(), "run_id=%s total_count=%d total_pages=%d seeded_rows=%d started_page=%d filter=%s:%s\n", runID, totalCount, totalPages, seededRows, startedPage, filterOp, filterVal)
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&startedPage, "started-page", 1, "Starting page number")
+	cmd.Flags().StringVar(&filterValue, "filter-value", "", "Channel filter: MOBILE or PUSH (default: unfiltered)")
 	return cmd
 }
 
 func newWorkerCmd(build func() (config.Config, api.Auth, error)) *cobra.Command {
 	var runID string
-	var mobileContact bool
+	var filterValue string
 	cmd := &cobra.Command{
 		Use:   "worker",
 		Short: "Run distributed Postgres-backed workers to fetch pages",
@@ -416,31 +400,33 @@ func newWorkerCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 
 			repo := db.NewRepo(pool)
 			apiClient := api.NewClient(cfg.APIBaseURL)
-			if mobileContact {
-				if err := validateMobileContactAuthPreflight(cmd.Context(), apiClient, auth, cfg); err != nil {
-					return err
-				}
-			} else {
-				if err := validateAuthPreflight(cmd.Context(), apiClient, auth, cfg); err != nil {
-					return err
-				}
-			}
 
 			if runID == "" {
-				var totalCount, totalPages int
-				var seededRows int64
-				if mobileContact {
-					runID, totalCount, totalPages, seededRows, err = createRunAndSeedMobileContactPages(cmd.Context(), repo, apiClient, auth, cfg)
-				} else {
-					runID, totalCount, totalPages, seededRows, err = createRunAndSeedAllPages(cmd.Context(), repo, apiClient, auth, cfg)
-				}
+				filterOp, filterVal, err := normalizeChannelFilter(filterValue)
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "auto-created run_id=%s total_count=%d total_pages=%d seeded_rows=%d started_page=1\n", runID, totalCount, totalPages, seededRows)
+				if err := validateAuthPreflight(cmd.Context(), apiClient, auth, cfg, filterOp, filterVal); err != nil {
+					return err
+				}
+
+				var totalCount, totalPages int
+				var seededRows int64
+				runID, totalCount, totalPages, seededRows, err = createRunAndSeedPages(cmd.Context(), repo, apiClient, auth, cfg, countFetcherFor(apiClient, filterVal), filterOp, filterVal, "")
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "auto-created run_id=%s total_count=%d total_pages=%d seeded_rows=%d started_page=1 filter=%s:%s\n", runID, totalCount, totalPages, seededRows, filterOp, filterVal)
 			} else {
 				runID, err = sanitizeAndValidateRunID(runID)
 				if err != nil {
+					return err
+				}
+				run, err := repo.GetRun(cmd.Context(), runID)
+				if err != nil {
+					return err
+				}
+				if err := validateAuthPreflight(cmd.Context(), apiClient, auth, cfg, run.FilterOperator, run.FilterValue); err != nil {
 					return err
 				}
 			}
@@ -504,7 +490,7 @@ func newWorkerCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 		},
 	}
 	cmd.Flags().StringVar(&runID, "run-id", "", "Run ID (uuid)")
-	cmd.Flags().BoolVar(&mobileContact, "mobile-contact", false, "When auto-creating a run, use mobile-contact count/filter flow")
+	cmd.Flags().StringVar(&filterValue, "filter-value", "", "Channel filter for auto-create: MOBILE or PUSH (default: unfiltered)")
 	return cmd
 }
 
@@ -555,19 +541,23 @@ func newResumeCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 			repo := db.NewRepo(pool)
 			apiClient := api.NewClient(cfg.APIBaseURL)
 
-			runID, totalCount, totalPages, seededRows, err := createRunAndSeedAllPages(cmd.Context(), repo, apiClient, auth, cfg)
+			run, err := repo.GetRun(cmd.Context(), runID)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "run_id=%s total_count=%d total_pages=%d seeded_rows=%d\n", runID, totalCount, totalPages, seededRows)
+			if err := validateAuthPreflight(cmd.Context(), apiClient, auth, cfg, run.FilterOperator, run.FilterValue); err != nil {
+				return err
+			}
+
+			_, totalCount, totalPages, seededRows, err := createRunAndSeedPages(cmd.Context(), repo, apiClient, auth, cfg, countFetcherFor(apiClient, run.FilterValue), run.FilterOperator, run.FilterValue, runID)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "run_id=%s total_count=%d total_pages=%d seeded_rows=%d filter=%s:%s\n", runID, totalCount, totalPages, seededRows, run.FilterOperator, run.FilterValue)
 
 			// Determine resume batch: explicit flag beats persisted value.
 			resumeBatch := fromBatch
 			if resumeBatch <= 0 {
-				run, rerr := repo.GetRun(cmd.Context(), runID)
-				if rerr != nil {
-					return rerr
-				}
 				if run.LastExitBatch != nil {
 					resumeBatch = *run.LastExitBatch
 				}
@@ -659,29 +649,24 @@ func newResumeCmd(build func() (config.Config, api.Auth, error)) *cobra.Command 
 
 type countFetcher func(ctx context.Context, auth api.Auth, p api.FetchCountParams) (api.CountResponse, *http.Response, error)
 
-func createRunAndSeedAllPages(ctx context.Context, repo *db.Repo, client *api.Client, auth api.Auth, cfg config.Config) (string, int, int, int64, error) {
-	return createRunAndSeedPages(ctx, repo, auth, cfg, client.FetchAllContactsCount, "Is", "", false)
-}
-
-func createRunAndSeedMobileContactPages(ctx context.Context, repo *db.Repo, client *api.Client, auth api.Auth, cfg config.Config) (string, int, int, int64, error) {
-	return createRunAndSeedPages(ctx, repo, auth, cfg, client.FetchMobileConnectCount, "Is", "MOBILE", true)
-}
-
 func createRunAndSeedPages(
 	ctx context.Context,
 	repo *db.Repo,
+	client *api.Client,
 	auth api.Auth,
 	cfg config.Config,
 	fetchCount countFetcher,
 	filterOperator string,
 	filterValue string,
-	alwaysCreateRun bool,
+	existingRunID string,
 ) (string, int, int, int64, error) {
 	createdNewRun := false
 	countResp, _, err := fetchCount(ctx, auth, api.FetchCountParams{
-		PageSize: cfg.PageSize,
-		Page:     1,
-		OrderBy:  "contactKey ASC",
+		PageSize:                cfg.PageSize,
+		Page:                    1,
+		OrderBy:                 "contactKey ASC",
+		FilterConditionOperator: filterOperator,
+		FilterConditionValue:    filterValue,
 	})
 	if err != nil {
 		return "", 0, 0, 0, fmt.Errorf("fetch total count: %w", err)
@@ -695,18 +680,13 @@ func createRunAndSeedPages(
 	log.Printf("Get total count: %d, and total pages: %d", totalCount, totalPages)
 
 	var runID string
-	if alwaysCreateRun {
-		existingRuns, err := repo.CountRunsByFilter(ctx, filterOperator, filterValue)
-		if err != nil {
-			return "", 0, 0, 0, fmt.Errorf("count runs by filter: %w", err)
-		}
-		log.Printf("found %d existing run(s) for filter %s:%s; creating new run", existingRuns, filterOperator, filterValue)
+	if existingRunID != "" {
+		runID = existingRunID
 	} else {
-		// Reuse the latest run if one already exists, so we never create a second
-		// run row and never seed the same pages twice.
-		runID, err = repo.GetLatestRunID(ctx)
+		// Reuse the latest run for this filter so we never create duplicate runs.
+		runID, err = repo.GetLatestRunIDByFilter(ctx, filterOperator, filterValue)
 		if err != nil {
-			return "", 0, 0, 0, fmt.Errorf("get latest run: %w", err)
+			return "", 0, 0, 0, fmt.Errorf("get latest run by filter: %w", err)
 		}
 	}
 
@@ -788,29 +768,28 @@ func newPageRange(prev, latest, pageSize, lastProcessedPage int) (startPage, end
 	return
 }
 
-func validateAuthPreflight(ctx context.Context, client *api.Client, auth api.Auth, cfg config.Config) error {
-	resp, err := client.PingAuth(ctx, auth, api.PingAuthParams{
-		PageSize:                cfg.PageSize,
-		FilterConditionOperator: "Is",
-		FilterConditionValue:    "MOBILE",
-		OrderBy:                 "contactKey ASC",
-	})
-	if err == nil {
-		return nil
+func validateAuthPreflight(ctx context.Context, client *api.Client, auth api.Auth, cfg config.Config, filterOperator, filterValue string) error {
+	if filterValue != "" {
+		_, resp, err := client.FetchChannelPage(ctx, auth, api.FetchPageParams{
+			PageSize:                cfg.PageSize,
+			Page:                    1,
+			OrderBy:                 "contactKey ASC",
+			FilterConditionOperator: filterOperator,
+			FilterConditionValue:    filterValue,
+		})
+		if err == nil {
+			return nil
+		}
+		if api.IsAuthError(resp) {
+			return fmt.Errorf("auth preflight failed with http %d (invalid bearer/csrf/cookie)", resp.StatusCode)
+		}
+		return fmt.Errorf("auth preflight failed: %w", err)
 	}
-	if api.IsAuthError(resp) {
-		return fmt.Errorf("auth preflight failed with http %d (invalid bearer/csrf/cookie)", resp.StatusCode)
-	}
-	return fmt.Errorf("auth preflight failed: %w", err)
-}
 
-func validateMobileContactAuthPreflight(ctx context.Context, client *api.Client, auth api.Auth, cfg config.Config) error {
-	_, resp, err := client.FetchMobileConnectPage(ctx, auth, api.FetchPageParams{
-		PageSize:                cfg.PageSize,
-		Page:                    1,
-		OrderBy:                 "contactKey ASC",
-		FilterConditionOperator: "Is",
-		FilterConditionValue:    "MOBILE",
+	_, resp, err := client.FetchAllContactsCount(ctx, auth, api.FetchCountParams{
+		PageSize: cfg.PageSize,
+		Page:     1,
+		OrderBy:  "contactKey ASC",
 	})
 	if err == nil {
 		return nil
